@@ -34,6 +34,14 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 
 ### 1. スクリプトを配置
 
+**方法A: 1ファイルだけ取得（最速・推奨）**
+
+```bash
+curl -L https://raw.githubusercontent.com/YATA-NODE/claude-code-statusline/main/statusline.py -o ~/.claude/statusline.py
+```
+
+**方法B: clone してからコピー**
+
 ```bash
 git clone https://github.com/YATA-NODE/claude-code-statusline.git
 cp claude-code-statusline/statusline.py ~/.claude/statusline.py
@@ -147,6 +155,14 @@ The 5h / Week values are passed in directly by Claude Code, so they reflect the 
 ## Installation
 
 ### 1. Place the script
+
+**Option A: Grab the single file (fastest, recommended)**
+
+```bash
+curl -L https://raw.githubusercontent.com/YATA-NODE/claude-code-statusline/main/statusline.py -o ~/.claude/statusline.py
+```
+
+**Option B: Clone, then copy**
 
 ```bash
 git clone https://github.com/YATA-NODE/claude-code-statusline.git
