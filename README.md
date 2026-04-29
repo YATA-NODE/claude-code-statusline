@@ -10,6 +10,7 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 - バーは下 3/4 ブロック (`▆`) で太く・行間に隙間
 - **段階色**: 〜59% 緑 / 60〜79% 黄 / 80%〜 赤
 - **コンテキスト 80% 以上で `⚠ /compact 推奨` を末尾に表示**
+- **5h / Week バーの末尾に次回リセット時刻 (`↻ HH:MM` / `↻ M/D HH:MM`) をローカル時刻で表示**
 - レートリミット情報が無いとき（非サブスク・初回起動直後など）は `N/A` でフォールバック
 - 標準ライブラリのみ（外部依存なし）
 
@@ -19,10 +20,12 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 |----|------|----|
 | 1 | モデル名（太字） | `model.display_name` |
 | 2 | Context バー + % | `context_window.used_percentage` |
-| 3 | 5h バー + % | `rate_limits.five_hour.used_percentage` |
-| 4 | Week バー + % | `rate_limits.seven_day.used_percentage` |
+| 3 | 5h バー + % + ↻ リセット時刻 | `rate_limits.five_hour.used_percentage` / `.resets_at` |
+| 4 | Week バー + % + ↻ リセット時刻 | `rate_limits.seven_day.used_percentage` / `.resets_at` |
 
 5h / Week は Claude Code から渡される値をそのまま使うため、**サブスクリプションの実際の残量と一致**します。値が無いときは自動で `N/A` 表示にフォールバックします。
+
+`resets_at` は Unix epoch 秒で渡されるため、本スクリプトは **ローカルタイムゾーンに変換** して表示します。5h は当日内に必ず収まるため `HH:MM` のみ、Week は数日先まで延びるため `M/D HH:MM` 形式で表示します。`resets_at` だけが欠けている場合は時刻表記を省略し、% のみ表示します。
 
 ## 必要環境
 
@@ -132,6 +135,7 @@ A simple Status Line for [Claude Code](https://claude.com/claude-code) that disp
 - Bars use the lower-three-quarters block (`▆`) for visual weight with breathing room between rows
 - **Stage colors**: 0–59% green / 60–79% yellow / 80%+ red
 - **Shows `⚠ /compact 推奨` next to the Context bar when context usage reaches 80%**
+- **Shows the next reset time (`↻ HH:MM` / `↻ M/D HH:MM`, local timezone) at the right end of the 5h / Week bars**
 - Falls back to `N/A` when rate-limit info is unavailable (e.g. non-subscribers, fresh sessions)
 - Pure standard library — no external dependencies
 
@@ -141,10 +145,12 @@ A simple Status Line for [Claude Code](https://claude.com/claude-code) that disp
 |----|------|----|
 | 1 | Model name (bold) | `model.display_name` |
 | 2 | Context bar + % | `context_window.used_percentage` |
-| 3 | 5h bar + % | `rate_limits.five_hour.used_percentage` |
-| 4 | Week bar + % | `rate_limits.seven_day.used_percentage` |
+| 3 | 5h bar + % + ↻ reset time | `rate_limits.five_hour.used_percentage` / `.resets_at` |
+| 4 | Week bar + % + ↻ reset time | `rate_limits.seven_day.used_percentage` / `.resets_at` |
 
 The 5h / Week values are passed in directly by Claude Code, so they reflect the **actual subscription remaining**. Missing values fall back to `N/A`.
+
+`resets_at` is provided as a Unix epoch seconds integer, so this script converts it to **the local timezone** for display. The 5h reset always falls within the current day, so it is shown as `HH:MM`; the weekly reset can be several days out, so it is shown as `M/D HH:MM`. If only `resets_at` is missing while `used_percentage` is present, the timestamp is omitted and only the percentage is shown.
 
 ## Requirements
 
