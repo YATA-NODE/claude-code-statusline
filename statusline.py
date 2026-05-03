@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Claude Code Status Line: model name + context/5h/week usage bars."""
 import json
+import os
+import subprocess
 import sys
 import time
+
+__version__ = "0.3.0"
 
 BAR_WIDTH = 24
 LABEL_WIDTH = 9
@@ -59,6 +63,32 @@ def format_reset(epoch: int, with_date: bool) -> str:
     return hm
 
 
+def get_repo_branch(project_dir: str) -> str:
+    if not project_dir:
+        return ""
+    repo = os.path.basename(project_dir.rstrip("/")) or project_dir
+    try:
+        r = subprocess.run(
+            ["git", "-C", project_dir, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=1,
+        )
+        if r.returncode == 0:
+            ref = r.stdout.strip()
+            if ref and ref != "HEAD":
+                return f"{repo} / {ref}"
+            if ref == "HEAD":
+                r2 = subprocess.run(
+                    ["git", "-C", project_dir, "rev-parse", "--short", "HEAD"],
+                    capture_output=True, text=True, timeout=1,
+                )
+                sha = r2.stdout.strip() if r2.returncode == 0 else ""
+                if sha:
+                    return f"{repo} / {sha}"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return repo
+
+
 def render_bar(label: str, pct: int) -> str:
     if pct < 0:
         bar = f"{EMPTY_COLOR}{EMPTY_CHAR * BAR_WIDTH}{RESET}"
@@ -80,13 +110,29 @@ def main() -> None:
     model_obj = data.get("model") or {}
     model_name = model_obj.get("display_name") or model_obj.get("id") or "Unknown"
 
+    workspace = data.get("workspace") or {}
+    project_dir = workspace.get("project_dir") or workspace.get("current_dir") or ""
+    repo_branch = get_repo_branch(project_dir)
+
+    cost = data.get("cost") or {}
+    total_cost = cost.get("total_cost_usd")
+    rate_limits_obj = data.get("rate_limits")
+    cost_str = ""
+    if rate_limits_obj is None and isinstance(total_cost, (int, float)) and total_cost > 0:
+        cost_str = f"${total_cost:.2f}"
+
     ctx = get_pct(data, "context_window", "used_percentage")
     five = get_pct(data, "rate_limits", "five_hour", "used_percentage")
     week = get_pct(data, "rate_limits", "seven_day", "used_percentage")
     five_reset = get_epoch(data, "rate_limits", "five_hour", "resets_at")
     week_reset = get_epoch(data, "rate_limits", "seven_day", "resets_at")
 
-    lines = [f"{BOLD}{model_name}{RESET}"]
+    header = f"{BOLD}{model_name}{RESET}"
+    if repo_branch:
+        header += f"  {repo_branch}"
+    if cost_str:
+        header += f"  {DIM}{cost_str}{RESET}"
+    lines = [header]
     for label, pct in (("Context", ctx), ("5h", five), ("Week", week)):
         line = render_bar(label, pct)
         if label == "Context" and pct >= 80:

@@ -11,6 +11,8 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 - **段階色**: 〜59% 緑 / 60〜79% 黄 / 80%〜 赤
 - **コンテキスト 80% 以上で `⚠ /compact 推奨` を末尾に表示**
 - **5h / Week バーの末尾に次回リセット時刻 (`↻ HH:MM` / `↻ M/D HH:MM`) をローカル時刻で表示**
+- **モデル名の右に `repo名/branch名` を表示**（Git リポジトリ内のとき）
+- **API 利用時のみ累計コスト `$X.XX` を末尾に表示**（サブスクリプション利用時は非表示）
 - レートリミット情報が無いとき（非サブスク・初回起動直後など）は `N/A` でフォールバック
 - 標準ライブラリのみ（外部依存なし）
 
@@ -18,7 +20,7 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 
 | 行 | 内容 | データソース |
 |----|------|----|
-| 1 | モデル名（太字） | `model.display_name` |
+| 1 | モデル名（太字）+ `repo名/branch名` + `$コスト`（API利用時のみ） | `model.display_name` / `workspace.project_dir` + `git rev-parse` / `cost.total_cost_usd` |
 | 2 | Context バー + % | `context_window.used_percentage` |
 | 3 | 5h バー + % + ↻ リセット時刻 | `rate_limits.five_hour.used_percentage` / `.resets_at` |
 | 4 | Week バー + % + ↻ リセット時刻 | `rate_limits.seven_day.used_percentage` / `.resets_at` |
@@ -26,6 +28,8 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 5h / Week は Claude Code から渡される値をそのまま使うため、**サブスクリプションの実際の残量と一致**します。値が無いときは自動で `N/A` 表示にフォールバックします。
 
 `resets_at` は Unix epoch 秒で渡されるため、本スクリプトは **ローカルタイムゾーンに変換** して表示します。5h は当日内に必ず収まるため `HH:MM` のみ、Week は数日先まで延びるため `M/D HH:MM` 形式で表示します。`resets_at` だけが欠けている場合は時刻表記を省略し、% のみ表示します。
+
+リポジトリ名は `workspace.project_dir` の basename、ブランチ名は `git rev-parse --abbrev-ref HEAD`（detached HEAD 時は短縮 SHA にフォールバック）から取得します。Git リポジトリ外ではディレクトリ名のみを表示します。コスト表示は `rate_limits` が不在かつ `cost.total_cost_usd > 0` のとき（= API キー利用が確実なとき）のみ出るので、サブスクリプション利用時に紛れ込むことはありません。
 
 ## 必要環境
 
@@ -115,7 +119,7 @@ EMPTY_COLOR = "\033[90m"   # bright black (16色)
 
 ## 動作の仕組み
 
-Claude Code は `statusLine.command` で指定されたシェルコマンドを定期的に実行し、その標準出力を入力欄の下に表示します。stdin からは現在のセッション情報が JSON で渡されます（`model`, `context_window`, `rate_limits`, `cost`, `workspace`, `transcript_path` 等）。本スクリプトはそのうち 4 フィールドを読み取ってバーに描画しているだけです。
+Claude Code は `statusLine.command` で指定されたシェルコマンドを定期的に実行し、その標準出力を入力欄の下に表示します。stdin からは現在のセッション情報が JSON で渡されます（`model`, `context_window`, `rate_limits`, `cost`, `workspace`, `transcript_path` 等）。本スクリプトは `model` / `workspace` / `cost` / `context_window` / `rate_limits` を読み取り、必要に応じて `git rev-parse` を 1 回呼んでブランチ名を取得します。
 
 ## ライセンス
 
@@ -136,6 +140,8 @@ A simple Status Line for [Claude Code](https://claude.com/claude-code) that disp
 - **Stage colors**: 0–59% green / 60–79% yellow / 80%+ red
 - **Shows `⚠ /compact 推奨` next to the Context bar when context usage reaches 80%**
 - **Shows the next reset time (`↻ HH:MM` / `↻ M/D HH:MM`, local timezone) at the right end of the 5h / Week bars**
+- **Shows `repo/branch` to the right of the model name** when inside a Git repository
+- **Shows accumulated `$X.XX` cost only when using the API** (hidden for Claude.ai subscription users)
 - Falls back to `N/A` when rate-limit info is unavailable (e.g. non-subscribers, fresh sessions)
 - Pure standard library — no external dependencies
 
@@ -143,7 +149,7 @@ A simple Status Line for [Claude Code](https://claude.com/claude-code) that disp
 
 | Row | Content | Source field |
 |----|------|----|
-| 1 | Model name (bold) | `model.display_name` |
+| 1 | Model name (bold) + `repo/branch` + `$cost` (API only) | `model.display_name` / `workspace.project_dir` + `git rev-parse` / `cost.total_cost_usd` |
 | 2 | Context bar + % | `context_window.used_percentage` |
 | 3 | 5h bar + % + ↻ reset time | `rate_limits.five_hour.used_percentage` / `.resets_at` |
 | 4 | Week bar + % + ↻ reset time | `rate_limits.seven_day.used_percentage` / `.resets_at` |
@@ -151,6 +157,8 @@ A simple Status Line for [Claude Code](https://claude.com/claude-code) that disp
 The 5h / Week values are passed in directly by Claude Code, so they reflect the **actual subscription remaining**. Missing values fall back to `N/A`.
 
 `resets_at` is provided as a Unix epoch seconds integer, so this script converts it to **the local timezone** for display. The 5h reset always falls within the current day, so it is shown as `HH:MM`; the weekly reset can be several days out, so it is shown as `M/D HH:MM`. If only `resets_at` is missing while `used_percentage` is present, the timestamp is omitted and only the percentage is shown.
+
+The repository name is the basename of `workspace.project_dir`; the branch name comes from `git rev-parse --abbrev-ref HEAD` (falling back to a short SHA when in detached HEAD state). Outside a Git repository, only the directory name is shown. The cost is rendered only when `rate_limits` is absent **and** `cost.total_cost_usd > 0` (i.e. you are clearly running on an API key), so it never leaks into a subscription session.
 
 ## Requirements
 
@@ -240,7 +248,7 @@ EMPTY_COLOR = "\033[90m"   # bright black (16 colors)
 
 ## How it works
 
-Claude Code periodically runs the command in `statusLine.command` and renders its stdout right below the input prompt. The current session info is provided to stdin as JSON (`model`, `context_window`, `rate_limits`, `cost`, `workspace`, `transcript_path`, etc.). This script only reads four fields and renders them as bars.
+Claude Code periodically runs the command in `statusLine.command` and renders its stdout right below the input prompt. The current session info is provided to stdin as JSON (`model`, `context_window`, `rate_limits`, `cost`, `workspace`, `transcript_path`, etc.). This script reads `model` / `workspace` / `cost` / `context_window` / `rate_limits`, and additionally invokes `git rev-parse` once to resolve the branch name when needed.
 
 ## License
 
