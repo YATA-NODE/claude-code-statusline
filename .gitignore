@@ -10,3 +10,6 @@ env/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Claude Code: local-only settings(個人設定は除外、共有エージェント定義は配布)
+.claude/settings.local.json
