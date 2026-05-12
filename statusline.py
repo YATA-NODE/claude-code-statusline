@@ -6,7 +6,9 @@ import subprocess
 import sys
 import time
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
+
+CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 
 BAR_WIDTH = 24
 LABEL_WIDTH = 9
@@ -63,6 +65,30 @@ def format_reset(epoch: int, with_date: bool) -> str:
     return hm
 
 
+def subscription_marker_path(session_id: str) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in session_id)[:128]
+    return os.path.join(CACHE_DIR, f"{safe}.subscription")
+
+
+def remember_subscription(session_id: str) -> None:
+    if not session_id:
+        return
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        open(subscription_marker_path(session_id), "a").close()
+    except OSError:
+        pass
+
+
+def is_known_subscription(session_id: str) -> bool:
+    if not session_id:
+        return False
+    try:
+        return os.path.exists(subscription_marker_path(session_id))
+    except OSError:
+        return False
+
+
 def get_repo_branch(project_dir: str) -> str:
     if not project_dir:
         return ""
@@ -114,11 +140,16 @@ def main() -> None:
     project_dir = workspace.get("project_dir") or workspace.get("current_dir") or ""
     repo_branch = get_repo_branch(project_dir)
 
+    session_id = data.get("session_id") or ""
+
     cost = data.get("cost") or {}
     total_cost = cost.get("total_cost_usd")
     rate_limits_obj = data.get("rate_limits")
+    if rate_limits_obj is not None:
+        remember_subscription(session_id)
     cost_str = ""
-    if rate_limits_obj is None and isinstance(total_cost, (int, float)) and total_cost > 0:
+    subscription_known = rate_limits_obj is not None or is_known_subscription(session_id)
+    if not subscription_known and isinstance(total_cost, (int, float)) and total_cost > 0:
         cost_str = f"${total_cost:.2f}"
 
     ctx = get_pct(data, "context_window", "used_percentage")

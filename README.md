@@ -29,7 +29,14 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 
 `resets_at` は Unix epoch 秒で渡されるため、本スクリプトは **ローカルタイムゾーンに変換** して表示します。5h は当日内に必ず収まるため `HH:MM` のみ、Week は数日先まで延びるため `M/D HH:MM` 形式で表示します。`resets_at` だけが欠けている場合は時刻表記を省略し、% のみ表示します。
 
-リポジトリ名は `workspace.project_dir` の basename、ブランチ名は `git rev-parse --abbrev-ref HEAD`（detached HEAD 時は短縮 SHA にフォールバック）から取得します。Git リポジトリ外ではディレクトリ名のみを表示します。コスト表示は `rate_limits` が不在かつ `cost.total_cost_usd > 0` のとき（= API キー利用が確実なとき）のみ出るので、サブスクリプション利用時に紛れ込むことはありません。
+リポジトリ名は `workspace.project_dir` の basename、ブランチ名は `git rev-parse --abbrev-ref HEAD`（detached HEAD 時は短縮 SHA にフォールバック）から取得します。Git リポジトリ外ではディレクトリ名のみを表示します。
+
+コスト表示は **API キー利用が確実なとき**（= サブスクリプション判定が成立しないとき）のみ出ます。判定は次の二段です:
+
+1. 現在の JSON に `rate_limits` があれば即サブスク扱い
+2. 過去に同 `session_id` で一度でも `rate_limits` を観測していればサブスク扱い（`~/.cache/claude-code-statusline/<session_id>.subscription` に空ファイルで記録）
+
+この二段判定により、`/compact` 直後など `rate_limits` が一時的に欠落するフレームでもサブスク利用者にコストが漏れません。マーカーは 0 バイトの空ファイルで、不要になったら `~/.cache/claude-code-statusline/` ごと削除して問題ありません。
 
 ## 必要環境
 
@@ -158,7 +165,14 @@ The 5h / Week values are passed in directly by Claude Code, so they reflect the 
 
 `resets_at` is provided as a Unix epoch seconds integer, so this script converts it to **the local timezone** for display. The 5h reset always falls within the current day, so it is shown as `HH:MM`; the weekly reset can be several days out, so it is shown as `M/D HH:MM`. If only `resets_at` is missing while `used_percentage` is present, the timestamp is omitted and only the percentage is shown.
 
-The repository name is the basename of `workspace.project_dir`; the branch name comes from `git rev-parse --abbrev-ref HEAD` (falling back to a short SHA when in detached HEAD state). Outside a Git repository, only the directory name is shown. The cost is rendered only when `rate_limits` is absent **and** `cost.total_cost_usd > 0` (i.e. you are clearly running on an API key), so it never leaks into a subscription session.
+The repository name is the basename of `workspace.project_dir`; the branch name comes from `git rev-parse --abbrev-ref HEAD` (falling back to a short SHA when in detached HEAD state). Outside a Git repository, only the directory name is shown.
+
+The cost is shown only when **API-key usage is certain** (i.e. when the subscription check below fails). The subscription check is two-step:
+
+1. If the current JSON contains `rate_limits`, treat as subscription immediately.
+2. If `rate_limits` was ever seen previously in the same `session_id`, treat as subscription (recorded as an empty file at `~/.cache/claude-code-statusline/<session_id>.subscription`).
+
+This two-step check prevents cost from leaking to subscription users on frames where `rate_limits` is briefly missing (e.g. right after `/compact`). The marker is a 0-byte empty file; you can delete `~/.cache/claude-code-statusline/` anytime when it is no longer needed.
 
 ## Requirements
 
