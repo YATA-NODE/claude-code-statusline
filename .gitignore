@@ -11,5 +11,5 @@ env/
 .DS_Store
 Thumbs.db
 
-# Claude Code: local-only settings(個人設定は除外、共有エージェント定義は配布)
-.claude/settings.local.json
+# Claude Code 内部設定 全体除外(2026-05-16 統合、PUBLIC OSS リポへの内部 path / 内部設計 / agent 設定の混入防止)
+.claude/
