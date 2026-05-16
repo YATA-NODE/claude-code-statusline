@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """Claude Code Status Line: model name + context/5h/week usage bars."""
+import argparse
+import datetime as _dt
+import glob
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
+import unicodedata
+from itertools import zip_longest
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 
@@ -19,6 +26,14 @@ RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
 EMPTY_COLOR = "\033[38;5;238m"  # 暗いグレー (xterm-256)
+
+SEP = "  "
+TWO_COL_MIN_WIDTH = 120
+CODEX_DIR = os.path.expanduser("~/.codex")
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+OSC_RE = re.compile(r"\x1b\].*?(?:\x07|\x1b\\)", re.DOTALL)
+CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+MODEL_NAME_MAX = 32
 
 
 def color_for(pct: int) -> str:
@@ -44,7 +59,7 @@ def get_pct(data: dict, *path: str) -> int:
     return -1
 
 
-def get_epoch(data: dict, *path: str):
+def get_int(data: dict, *path: str):
     cur = data
     for key in path:
         if not isinstance(cur, dict) or cur.get(key) is None:
@@ -127,7 +142,173 @@ def render_bar(label: str, pct: int) -> str:
     return f"{label:<{LABEL_WIDTH}}{fill_part}{empty_part}  {pct:>3d}%"
 
 
+def visible_len(s: str) -> int:
+    s = ANSI_RE.sub("", s)
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
+
+
+def pad_visible(s: str, width: int) -> str:
+    return s + " " * max(0, width - visible_len(s))
+
+
+def sanitize_display(s, limit: int = MODEL_NAME_MAX) -> str:
+    if not isinstance(s, str):
+        return ""
+    s = ANSI_RE.sub("", s)
+    s = OSC_RE.sub("", s)
+    s = CTRL_RE.sub("", s)
+    if len(s) > limit:
+        s = s[: limit - 1] + "…"
+    return s
+
+
+# --- Codex (opt-in) ---
+
+
+def _codex_latest_jsonl():
+    if not os.path.isdir(CODEX_DIR):
+        return None
+    today = _dt.date.today()
+    candidates = []
+    for delta in (0, 1):
+        d = today - _dt.timedelta(days=delta)
+        pattern = os.path.join(
+            CODEX_DIR, "sessions",
+            f"{d.year:04d}", f"{d.month:02d}", f"{d.day:02d}", "*.jsonl",
+        )
+        candidates.extend(glob.glob(pattern))
+    if not candidates:
+        return None
+    try:
+        return max(candidates, key=os.path.getmtime)
+    except OSError:
+        return None
+
+
+def _codex_extract(path):
+    model = None
+    tc = None
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if '"turn_context"' in line:
+                    try:
+                        d = json.loads(line)
+                    except (ValueError, TypeError):
+                        continue
+                    if d.get("type") == "turn_context":
+                        m = (d.get("payload") or {}).get("model")
+                        if isinstance(m, str) and m:
+                            model = m
+                elif '"token_count"' in line:
+                    try:
+                        d = json.loads(line)
+                    except (ValueError, TypeError):
+                        continue
+                    payload = d.get("payload") or {}
+                    if d.get("type") == "event_msg" and payload.get("type") == "token_count":
+                        tc = payload
+    except OSError:
+        return None
+
+    if model is None and tc is None:
+        return None
+
+    info = {
+        "model": model,
+        "ctx_pct": -1,
+        "five_pct": -1,
+        "five_reset": None,
+        "week_pct": -1,
+        "week_reset": None,
+    }
+    if tc:
+        info["five_pct"] = get_pct(tc, "rate_limits", "primary", "used_percent")
+        info["five_reset"] = get_int(tc, "rate_limits", "primary", "resets_at")
+        info["week_pct"] = get_pct(tc, "rate_limits", "secondary", "used_percent")
+        info["week_reset"] = get_int(tc, "rate_limits", "secondary", "resets_at")
+        total = get_int(tc, "info", "total_token_usage", "total_tokens")
+        ctx_window = get_int(tc, "info", "model_context_window")
+        if total is not None and ctx_window is not None and ctx_window > 0:
+            info["ctx_pct"] = max(0, min(100, int(total * 100 / ctx_window)))
+    return info
+
+
+def _codex_render(info):
+    safe_model = sanitize_display(info["model"]) or "codex"
+    header = f"{BOLD}{safe_model}{RESET}"
+    lines = [header]
+    for label, pct, reset_epoch, with_date in (
+        ("Context", info["ctx_pct"], None, False),
+        ("5h", info["five_pct"], info["five_reset"], False),
+        ("Week", info["week_pct"], info["week_reset"], True),
+    ):
+        line = render_bar(label, pct)
+        if reset_epoch is not None and pct >= 0:
+            line += f"  {DIM}↻ {format_reset(reset_epoch, with_date)}{RESET}"
+        lines.append(line)
+    return lines
+
+
+def _tmux_pane_width():
+    if not os.environ.get("TMUX"):
+        return None
+    try:
+        r = subprocess.run(
+            ["tmux", "display-message", "-p", "#{pane_width}"],
+            capture_output=True, text=True, timeout=0.5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    w = r.stdout.strip()
+    return int(w) if w.isdigit() and int(w) > 0 else None
+
+
+def _term_width(override=None):
+    # Inside tmux, pane_width is the only authoritative width:
+    # --width or env values would overflow the pane and force wrapping.
+    tmux_w = _tmux_pane_width()
+    if tmux_w is not None:
+        return tmux_w
+    if isinstance(override, int) and override > 0:
+        return override
+    v = os.environ.get("STATUSLINE_COLUMNS") or os.environ.get("COLUMNS")
+    if v and v.isdigit() and int(v) > 0:
+        return int(v)
+    for stream in (sys.stderr, sys.stdout, sys.stdin):
+        try:
+            cols = os.get_terminal_size(stream.fileno()).columns
+            if cols > 0:
+                return cols
+        except (OSError, AttributeError, ValueError):
+            continue
+    return shutil.get_terminal_size((80, 24)).columns
+
+
+def _combine_columns(left_lines, right_lines, width_override=None):
+    if not right_lines:
+        return left_lines
+    term_w = _term_width(width_override)
+    if term_w < TWO_COL_MIN_WIDTH:
+        return left_lines
+    left_w = max((visible_len(l) for l in left_lines), default=0)
+    right_w = max((visible_len(r) for r in right_lines), default=0)
+    if left_w + len(SEP) + right_w > term_w:
+        return left_lines
+    combined = []
+    for l, r in zip_longest(left_lines, right_lines, fillvalue=""):
+        combined.append(pad_visible(l, left_w) + SEP + r)
+    return combined
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--codex", action="store_true")
+    parser.add_argument("--width", type=int, default=None)
+    args, _unknown = parser.parse_known_args()
+
     try:
         data = json.load(sys.stdin)
     except Exception:
@@ -155,8 +336,8 @@ def main() -> None:
     ctx = get_pct(data, "context_window", "used_percentage")
     five = get_pct(data, "rate_limits", "five_hour", "used_percentage")
     week = get_pct(data, "rate_limits", "seven_day", "used_percentage")
-    five_reset = get_epoch(data, "rate_limits", "five_hour", "resets_at")
-    week_reset = get_epoch(data, "rate_limits", "seven_day", "resets_at")
+    five_reset = get_int(data, "rate_limits", "five_hour", "resets_at")
+    week_reset = get_int(data, "rate_limits", "seven_day", "resets_at")
 
     header = f"{BOLD}{model_name}{RESET}"
     if repo_branch:
@@ -173,6 +354,12 @@ def main() -> None:
         elif label == "Week" and pct >= 0 and week_reset is not None:
             line += f"  {DIM}↻ {format_reset(week_reset, True)}{RESET}"
         lines.append(line)
+
+    if args.codex:
+        codex_path = _codex_latest_jsonl()
+        codex_info = _codex_extract(codex_path) if codex_path else None
+        codex_lines = _codex_render(codex_info) if codex_info else []
+        lines = _combine_columns(lines, codex_lines, width_override=args.width)
 
     sys.stdout.write("\n".join(lines))
 

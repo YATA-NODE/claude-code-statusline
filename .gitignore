@@ -13,3 +13,6 @@ Thumbs.db
 
 # Claude Code 内部設定 全体除外(2026-05-16 統合、PUBLIC OSS リポへの内部 path / 内部設計 / agent 設定の混入防止)
 .claude/
+
+# プレビュー撮影用スクリプト(オーナーが README 用スクショを撮るだけのローカル開発用、配布対象外)
+preview*.sh

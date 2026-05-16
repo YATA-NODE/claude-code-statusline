@@ -15,6 +15,7 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 - **API 利用時のみ累計コスト `$X.XX` を末尾に表示**（サブスクリプション利用時は非表示）
 - レートリミット情報が無いとき（非サブスク・初回起動直後など）は `N/A` でフォールバック
 - 標準ライブラリのみ（外部依存なし）
+- **補助機能（opt-in）**: Codex CLI のレート残量を並置表示など。default OFF、明示フラグ指定時のみ動作（詳細は [補助機能](#補助機能) 章）
 
 ## 表示内容
 
@@ -124,6 +125,77 @@ if label == "Context" and pct >= 80:
 EMPTY_COLOR = "\033[90m"   # bright black (16色)
 ```
 
+## 補助機能
+
+opt-in で有効化する追加機能群。**標準機能(上記 4 本柱)とは独立**しており、コマンドライン引数で明示的に有効化したときのみ動作・I/O 発生。default は OFF なので、何も指定しなければ標準機能だけが動きます。
+
+![preview-codex](preview_codex.png)
+
+### Codex CLI 並置表示 (`--codex`)
+
+Claude Code に加えて [Codex CLI](https://github.com/openai/codex) を併用しているとき、`--codex` フラグを付けると Codex 側のモデル名・コンテキスト使用率・5h レート残量・週次レート残量を **右側に並置表示** します（既存 4 本柱は左側そのまま）。default OFF なので、未指定時は完全に従来動作（Codex 関連の I/O も発生しません）。
+
+#### 有効化
+
+`~/.claude/settings.json` の `command` に `--codex` と、自分のターミナル幅に合わせた `--width <N>` を足します:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "python3 /home/<your-user>/.claude/statusline.py --codex --width 200",
+    "padding": 0,
+    "refreshInterval": 60000
+  }
+}
+```
+
+`--width` を **強く推奨** します。Claude Code の statusLine 実行環境では stdin/stdout/stderr がパイプ化されており、`os.get_terminal_size` で端末幅を取得できないことが多く、fallback の 80 cells と判定されて右ブロックが silent skip される(=画像と異なり何も右に出ない)ためです。自分のターミナルの実幅を指定してください(WSL2 + Windows Terminal 最大化なら 200-280 程度、VS Code 統合ターミナルなら 150-200 程度が目安。分からなければ 200 で試して見え方で調整)。
+
+代替として環境変数 `STATUSLINE_COLUMNS=200` を `command` の前に置く方法もあります(`"command": "STATUSLINE_COLUMNS=200 python3 ..."`)。
+
+**tmux 内では自動追従**: `$TMUX` 環境変数が設定されているとき、`tmux display-message -p '#{pane_width}'` で **現 pane の幅を毎ターン動的取得** します。pane 分割を増減しても次のターンで自動追従。tmux と通常ターミナルを併用する場合、`--width 280`(通常ターミナル最大幅)を設定しておけば、tmux 内では自動的に pane 幅が優先されます。
+
+優先順位(高い順):
+1. **tmux pane_width**(`$TMUX` が set で `tmux display-message` 成功時)
+2. `--width N` CLI 引数
+3. `STATUSLINE_COLUMNS` 環境変数
+4. `COLUMNS` 環境変数
+5. TTY fd 試行(stderr/stdout/stdin)
+6. fallback(80)
+
+CLI 引数より tmux 検知を優先するのは異例ですが、pane 内では物理画面幅が pane_width に制限されるため、`--width` の固定値を信じると tmux pane で必ず折り返すためです。
+
+#### 表示崩壊回避の精度
+
+全角文字(日本語、絵文字など)を含む行のセル幅は `unicodedata.east_asian_width` で計算しているため、`⚠ /compact 推奨` のような全角混在行でも右ブロックは正しく押し出され、重なりません。
+
+#### 取得元
+
+`~/.codex/sessions/YYYY/MM/DD/*.jsonl` の最新ファイル（mtime 降順）を読み、
+
+| 項目 | 取得経路 |
+|------|----------|
+| モデル名 | 最新の `type:"turn_context"` 行の `payload.model`（`/model` 切替に追従） |
+| Context % | 最新の `event_msg / payload.type=="token_count"` 行の `info.total_token_usage.total_tokens` ÷ `info.model_context_window` |
+| 5h 残量 + リセット時刻 | 同行の `payload.rate_limits.primary.used_percent` / `.resets_at` |
+| Week 残量 + リセット時刻 | 同行の `payload.rate_limits.secondary.used_percent` / `.resets_at` |
+
+read-only で読むだけで、Codex 側に書き込みは行いません。
+
+#### 自動フォールバック（表示崩壊回避）
+
+既存 4 本柱の表示を絶対に崩さないため、以下のケースで **右ブロックだけ静かに非表示**（左側は通常通り）にします:
+
+- `~/.codex/` が存在しない（Codex 未インストール）
+- 当日と前日のどちらにも session jsonl が無い
+- jsonl からモデル名もレートリミット情報も一切取得できなかった（ファイル読込失敗 / 全行壊れている / 期待形式不在）
+- 端末幅が `120` セル未満（または `左幅 + 2 + 右幅 > 端末幅`）
+
+各行の `json.loads` は寛容パース（壊れた行はその行だけスキップ）で、後段の有効な `turn_context` / `token_count` が一つでも取れれば、取れた範囲で表示します。モデル名は ANSI/OSC 等の端末制御文字を除去のうえ最大 32 文字に切り詰めて表示します。
+
+端末幅は `$COLUMNS` → `stderr/stdout/stdin` の TTY fd → fallback の順で判定します。Claude Code から渡される JSON には端末幅情報が無いため、ターミナルアプリの幅を直接見ています。
+
 ## 動作の仕組み
 
 Claude Code は `statusLine.command` で指定されたシェルコマンドを定期的に実行し、その標準出力を入力欄の下に表示します。stdin からは現在のセッション情報が JSON で渡されます（`model`, `context_window`, `rate_limits`, `cost`, `workspace`, `transcript_path` 等）。本スクリプトは `model` / `workspace` / `cost` / `context_window` / `rate_limits` を読み取り、必要に応じて `git rev-parse` を 1 回呼んでブランチ名を取得します。
@@ -151,6 +223,7 @@ A simple Status Line for [Claude Code](https://claude.com/claude-code) that disp
 - **Shows accumulated `$X.XX` cost only when using the API** (hidden for Claude.ai subscription users)
 - Falls back to `N/A` when rate-limit info is unavailable (e.g. non-subscribers, fresh sessions)
 - Pure standard library — no external dependencies
+- **Auxiliary features (opt-in)**: side-by-side Codex CLI rate display, etc. Default OFF; only active when explicit flags are given (see [Auxiliary features](#auxiliary-features))
 
 ## Display contents
 
@@ -259,6 +332,77 @@ Switch `EMPTY_COLOR` to a 16-color value:
 ```python
 EMPTY_COLOR = "\033[90m"   # bright black (16 colors)
 ```
+
+## Auxiliary features
+
+Opt-in extensions that activate only when explicitly enabled via command-line flags. They are **fully independent from the core 4-line layout** above — no I/O, no behavior change unless you opt in.
+
+![preview-codex](preview_codex.png)
+
+### Codex CLI side-by-side display (`--codex`)
+
+If you also use [Codex CLI](https://github.com/openai/codex) alongside Claude Code, adding `--codex` shows Codex's **model name, context %, 5h primary rate, and weekly secondary rate** as a second column to the right (the existing 4-line layout stays unchanged on the left). Default is OFF — when the flag is absent, no Codex-related I/O happens at all.
+
+#### Enable
+
+Add `--codex` and `--width <N>` (your actual terminal width) to the `command` in `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "python3 /home/<your-user>/.claude/statusline.py --codex --width 200",
+    "padding": 0,
+    "refreshInterval": 60000
+  }
+}
+```
+
+`--width` is **strongly recommended**. Under the Claude Code statusLine runner, stdin/stdout/stderr are all piped, so `os.get_terminal_size` typically fails and the script falls back to 80 cells — which silently hides the right column (nothing shows on the right). Pass your actual terminal width (WSL2 + Windows Terminal maximized: 200–280, VS Code integrated terminal: 150–200; if unsure, start with 200 and adjust).
+
+Alternatively, set the environment variable `STATUSLINE_COLUMNS=200` in front of the command (`"command": "STATUSLINE_COLUMNS=200 python3 ..."`).
+
+**Auto-follow inside tmux**: when `$TMUX` is set, the script queries `tmux display-message -p '#{pane_width}'` to **fetch the current pane width on every tick**. Splitting / unsplitting panes is picked up on the next tick automatically. If you mix tmux with bare terminal, just set `--width 280` (your max bare-terminal width) once — inside tmux the dynamic pane width takes over.
+
+Resolution order (highest first):
+1. **tmux pane_width** (when `$TMUX` is set and `tmux display-message` succeeds)
+2. `--width N` CLI flag
+3. `STATUSLINE_COLUMNS` env
+4. `COLUMNS` env
+5. TTY fd probe (stderr/stdout/stdin)
+6. fallback (80)
+
+Putting tmux above the CLI flag is unusual, but a pane's physical render width is hard-capped at `pane_width` — trusting a larger `--width` inside a pane would always wrap.
+
+#### Why the right column never overlaps
+
+Cell widths for full-width characters (CJK, emoji) are computed via `unicodedata.east_asian_width`, so a line like `⚠ /compact 推奨` (which mixes ASCII and Japanese) is measured correctly and the right block is pushed out without overlap.
+
+#### Data source
+
+Reads the latest (by mtime) `~/.codex/sessions/YYYY/MM/DD/*.jsonl`:
+
+| Item | Source |
+|------|--------|
+| Model name | The latest `type:"turn_context"` line's `payload.model` (tracks `/model` switches) |
+| Context % | The latest `event_msg / payload.type=="token_count"` line: `info.total_token_usage.total_tokens` ÷ `info.model_context_window` |
+| 5h usage + reset | Same line: `payload.rate_limits.primary.used_percent` / `.resets_at` |
+| Week usage + reset | Same line: `payload.rate_limits.secondary.used_percent` / `.resets_at` |
+
+Read-only. Nothing is written back to Codex's session files.
+
+#### Auto-fallback (never break the existing layout)
+
+To guarantee the existing 4-line layout never breaks, the right column is **silently hidden** (left side stays normal) in any of:
+
+- `~/.codex/` does not exist (Codex not installed)
+- No session jsonl exists for today or yesterday
+- Neither a model name nor rate limit info could be extracted from the jsonl (file read failed / every line malformed / expected shapes absent)
+- Terminal width < `120` cells, or `left_width + 2 + right_width > terminal_width`
+
+Per-line `json.loads` is lenient (a single broken line is just skipped); if at least one valid `turn_context` / `token_count` is found later, the right column is rendered with whatever was extracted. The model name is sanitized of ANSI/OSC and other terminal control sequences and truncated to 32 characters before display.
+
+Terminal width is detected via `$COLUMNS` → `stderr/stdout/stdin` TTY fd → fallback (the Claude Code statusLine JSON does not include terminal width, so we look at the terminal app directly).
 
 ## How it works
 
