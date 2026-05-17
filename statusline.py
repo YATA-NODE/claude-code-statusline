@@ -13,7 +13,7 @@ import time
 import unicodedata
 from itertools import zip_longest
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 
@@ -214,6 +214,10 @@ def _codex_extract(path):
     if model is None and tc is None:
         return None
 
+    # API key auth = no `rate_limits` field in `token_count` event (or no
+    # `token_count` event at all, e.g. quota-exceeded responses). Subscription
+    # auth always carries `rate_limits.primary/secondary`.
+    has_rate_limits = isinstance((tc or {}).get("rate_limits"), dict)
     info = {
         "model": model,
         "ctx_pct": -1,
@@ -221,6 +225,7 @@ def _codex_extract(path):
         "five_reset": None,
         "week_pct": -1,
         "week_reset": None,
+        "is_api_mode": (model is not None) and not has_rate_limits,
     }
     if tc:
         info["five_pct"] = get_pct(tc, "rate_limits", "primary", "used_percent")
@@ -237,14 +242,18 @@ def _codex_extract(path):
 def _codex_render(info):
     safe_model = sanitize_display(info["model"]) or "codex"
     header = f"{BOLD}{safe_model}{RESET}"
+    if info.get("is_api_mode"):
+        header += f"  {DIM}[API]{RESET}"
     lines = [header]
     for label, pct, reset_epoch, with_date in (
         ("Context", info["ctx_pct"], None, False),
         ("5h", info["five_pct"], info["five_reset"], False),
         ("Week", info["week_pct"], info["week_reset"], True),
     ):
+        if pct < 0:
+            continue
         line = render_bar(label, pct)
-        if reset_epoch is not None and pct >= 0:
+        if reset_epoch is not None:
             line += f"  {DIM}↻ {format_reset(reset_epoch, with_date)}{RESET}"
         lines.append(line)
     return lines

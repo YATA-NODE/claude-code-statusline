@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.1] - 2026-05-17
+
+### Added
+- `[API]` marker shown in dim gray after the Codex model name when the latest Codex session is running in API key mode (detected by absence of `rate_limits` in the `token_count` event of `~/.codex/sessions/.../*.jsonl`, which also covers cases where no `token_count` event is emitted at all such as `Quota exceeded` responses).
+- The marker mirrors the Claude-side convention: subscription users see rate-limit bars as the usage signal, API-key users see `$X.XX` cost on Claude / `[API]` on Codex. The marker text is intentionally generic — no subscription plan proper nouns are emitted from any output string.
+
+### Changed
+- Codex side: N/A bars are now omitted individually instead of rendered as empty `N/A` rows. When a bar's value cannot be computed (e.g. `rate_limits` absent in API mode, or `token_count` event missing entirely), that row is simply not shown. Subscription mode with full data continues to render all four rows; API-mode-with-successful-response shows model name + Context; quota-exceeded etc. shows model name only.
+
+### Notes
+- Subscription-authenticated Codex sessions keep their existing display unchanged when all data is available. `rate_limits.primary/secondary` bars remain the usage signal.
+- Default behavior unchanged: `--codex` opt-in is still required; without it, no Codex-related I/O happens.
+- Known limitation under review: the `[API]` detection currently reflects the latest jsonl file, so a stale API-mode session can keep `[API]` showing even after the user switches back to subscription auth until a new session is started. A stricter detection (e.g. mtime-based liveness check or auth-mode-change trigger) is being designed for a follow-up release — see `~/.claude/plans/` for the current discussion.
+
 ## [0.4.0] - 2026-05-16
 
 ### Added
