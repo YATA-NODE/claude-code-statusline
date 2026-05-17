@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.2] - 2026-05-17
+
+### Fixed
+- Codex side: N/A bar omission is now **limited to API mode only**. Subscription-authenticated sessions keep N/A bars visible (Context / 5h / Week rows always render, with `N/A` when a value cannot be computed) because the bars and their reset times are decision info for the user — "how much 5h budget is left, when does the weekly window reset" matters even when a single tick is briefly missing data. API mode (usage-based billing) continues to hide N/A rows since rate limits aren't a concept there.
+- Restores the v0.4.0-style Codex 4-row display for subscription users whose latest jsonl temporarily lacks `token_count` (e.g. a stale API-mode jsonl is the most recent file, while `auth.json` shows the user is back on subscription).
+
 ## [0.4.1] - 2026-05-17
 
 ### Added

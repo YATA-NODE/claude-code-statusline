@@ -13,7 +13,7 @@ import time
 import unicodedata
 from itertools import zip_longest
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 
@@ -258,12 +258,17 @@ def _codex_render(info):
     if info.get("is_api_mode"):
         header += f"  {DIM}[API]{RESET}"
     lines = [header]
+    is_api = info.get("is_api_mode")
     for label, pct, reset_epoch, with_date in (
         ("Context", info["ctx_pct"], None, False),
         ("5h", info["five_pct"], info["five_reset"], False),
         ("Week", info["week_pct"], info["week_reset"], True),
     ):
-        if pct < 0:
+        # Subscription auth: keep N/A rows visible — rate-limit bars and
+        # reset times are decision info for the user (when can I use Codex
+        # again?). API auth: hide N/A rows since rate limits are not a
+        # concept (usage-based billing instead).
+        if is_api and pct < 0:
             continue
         line = render_bar(label, pct)
         if reset_epoch is not None:
