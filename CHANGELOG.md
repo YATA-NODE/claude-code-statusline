@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file. Format loosely 
 ## [0.4.1] - 2026-05-17
 
 ### Added
-- `[API]` marker shown in dim gray after the Codex model name when the latest Codex session is running in API key mode (detected by absence of `rate_limits` in the `token_count` event of `~/.codex/sessions/.../*.jsonl`, which also covers cases where no `token_count` event is emitted at all such as `Quota exceeded` responses).
+- `[API]` marker shown in dim gray after the Codex model name when Codex is currently using API key authentication. Detection reads `~/.codex/auth.json`'s `OPENAI_API_KEY` field — only its existence and length are checked, never the key value itself — so the marker reflects the **live auth state** rather than relying on stale jsonl history. Auth switches (`codex login --with-api-key` ↔ `codex login`) are picked up on the next statusline refresh (within 60s) regardless of whether a new Codex session has been started.
 - The marker mirrors the Claude-side convention: subscription users see rate-limit bars as the usage signal, API-key users see `$X.XX` cost on Claude / `[API]` on Codex. The marker text is intentionally generic — no subscription plan proper nouns are emitted from any output string.
 
 ### Changed
@@ -14,7 +14,7 @@ All notable changes to this project are documented in this file. Format loosely 
 ### Notes
 - Subscription-authenticated Codex sessions keep their existing display unchanged when all data is available. `rate_limits.primary/secondary` bars remain the usage signal.
 - Default behavior unchanged: `--codex` opt-in is still required; without it, no Codex-related I/O happens.
-- Known limitation under review: the `[API]` detection currently reflects the latest jsonl file, so a stale API-mode session can keep `[API]` showing even after the user switches back to subscription auth until a new session is started. A stricter detection (e.g. mtime-based liveness check or auth-mode-change trigger) is being designed for a follow-up release — see `~/.claude/plans/` for the current discussion.
+- `~/.codex/auth.json` access is read-only and fails safe (no `[API]` shown) on any read error / JSON parse error / missing field. The key string content is never read into a variable used for output, comparison, or logging — only `isinstance(key, str) and len(key) > 0` is evaluated.
 
 ## [0.4.0] - 2026-05-16
 

@@ -30,6 +30,7 @@ EMPTY_COLOR = "\033[38;5;238m"  # 暗いグレー (xterm-256)
 SEP = "  "
 TWO_COL_MIN_WIDTH = 120
 CODEX_DIR = os.path.expanduser("~/.codex")
+CODEX_AUTH = os.path.expanduser("~/.codex/auth.json")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 OSC_RE = re.compile(r"\x1b\].*?(?:\x07|\x1b\\)", re.DOTALL)
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -165,6 +166,22 @@ def sanitize_display(s, limit: int = MODEL_NAME_MAX) -> str:
 # --- Codex (opt-in) ---
 
 
+def _codex_auth_is_api():
+    # Reads only the OPENAI_API_KEY field's existence + length, never the
+    # string content. Fail-safe: any error returns False so [API] is not shown
+    # on uncertain state. ~/.codex/auth.json is the live source-of-truth for
+    # auth mode; latest jsonl mtime could be stale after auth switch.
+    try:
+        with open(CODEX_AUTH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(d, dict):
+        return False
+    key = d.get("OPENAI_API_KEY")
+    return isinstance(key, str) and len(key) > 0
+
+
 def _codex_latest_jsonl():
     if not os.path.isdir(CODEX_DIR):
         return None
@@ -214,10 +231,6 @@ def _codex_extract(path):
     if model is None and tc is None:
         return None
 
-    # API key auth = no `rate_limits` field in `token_count` event (or no
-    # `token_count` event at all, e.g. quota-exceeded responses). Subscription
-    # auth always carries `rate_limits.primary/secondary`.
-    has_rate_limits = isinstance((tc or {}).get("rate_limits"), dict)
     info = {
         "model": model,
         "ctx_pct": -1,
@@ -225,7 +238,7 @@ def _codex_extract(path):
         "five_reset": None,
         "week_pct": -1,
         "week_reset": None,
-        "is_api_mode": (model is not None) and not has_rate_limits,
+        "is_api_mode": (model is not None) and _codex_auth_is_api(),
     }
     if tc:
         info["five_pct"] = get_pct(tc, "rate_limits", "primary", "used_percent")

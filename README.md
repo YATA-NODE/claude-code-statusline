@@ -187,17 +187,17 @@ read-only で読むだけで、Codex 側に書き込みは行いません。
 
 Codex CLI が **API キー認証**(`codex login --with-api-key`)で動作しているとき、モデル名の右に薄字で `[API]` マーカーを表示します。サブスクリプション認証で動作しているときは表示されません。
 
-判定は jsonl の `token_count` イベント内の `rate_limits` フィールド有無で行います:
+判定は `~/.codex/auth.json` の `OPENAI_API_KEY` フィールドの **存在のみ** を見て行います(キー本体の文字列内容は読み取り・出力・ログ出力のいずれにも使いません、`isinstance(key, str) and len(key) > 0` の bool 化のみ):
 
-| 状況 | jsonl の `rate_limits` | 表示 |
+| 状況 | `~/.codex/auth.json` の `OPENAI_API_KEY` | 表示 |
 |------|----|----|
-| サブスクリプション認証 | あり（`primary` / `secondary` 完備） | `[API]` 非表示、5h / Week バーで残量を視覚化 |
-| API キー認証（正常応答） | なし | `[API]` 表示、5h / Week バーは `N/A` |
-| API キー認証（クォータ超過などの応答失敗） | なし（`token_count` イベント自体不在） | `[API]` 表示、5h / Week バーは `N/A` |
+| サブスクリプション認証 | `null`(string なし) | `[API]` 非表示 |
+| API キー認証 | string(値あり) | `[API]` 表示 |
+| ファイル不在 / 読み取り失敗 / JSON 破損 | - | `[API]` 非表示(安全側、誤情報ゼロ) |
+
+判定は **現在の認証状態を直接見る** ため、認証切替(`codex login --with-api-key` ↔ `codex login`)は次の statusline refresh(最大 60 秒)で反映されます。古い Codex セッション jsonl が残っていても誤検出しません。
 
 この表示は **「Codex が API 課金中であること」をユーザーに視覚的に伝える** ための認識補助です（Claude 側で API キー利用時に累計コスト `$X.XX` を表示するのと対応する仕組み）。「API」は区分の総称表記で、プラン固有名は本スクリプトの表示出力に一切登場しません。
-
-> ⚠️ **既知の制約(現在再設計中)**: 上記の判定は最新の jsonl ファイル 1 個を見て行います。API キー認証セッションを使った後でサブスクリプション認証に戻した場合、新しいセッションを起動するまで古い API モード jsonl が最新のまま = `[API]` 表示が継続します。より厳格な判定(mtime ベースのライブ性チェック / 認証モード変更検知 / 等)を次回リリースで導入予定です。
 
 #### 値が取れないバーは個別省略
 
@@ -421,17 +421,17 @@ Read-only. Nothing is written back to Codex's session files.
 
 When Codex CLI is running with **API key authentication** (`codex login --with-api-key`), `[API]` is shown in dim gray right after the model name. Subscription-authenticated sessions do not show this marker.
 
-Detection is based on the presence of `rate_limits` in the `token_count` event of the jsonl:
+Detection reads `~/.codex/auth.json` and checks **only whether the `OPENAI_API_KEY` field is a non-empty string** — the key's string content is never read into any variable used for output, comparison, or logging (only `isinstance(key, str) and len(key) > 0` is evaluated):
 
-| Auth mode | `rate_limits` in jsonl | Display |
+| Auth state | `OPENAI_API_KEY` in `auth.json` | Display |
 |------|----|----|
-| Subscription auth | Present (`primary` / `secondary` filled) | No `[API]`; 5h / Week bars are the usage signal |
-| API key auth (success) | Absent | `[API]` shown; 5h / Week bars are `N/A` |
-| API key auth (quota exceeded etc.) | Absent (no `token_count` event at all) | `[API]` shown; 5h / Week bars are `N/A` |
+| Subscription auth | `null` (no string) | No `[API]` |
+| API key auth | string (value present) | `[API]` shown |
+| File missing / read error / JSON parse error | - | No `[API]` (fail-safe; no false positives) |
+
+Because detection reads the **live auth state** directly, switching auth (`codex login --with-api-key` ↔ `codex login`) is reflected on the next statusline refresh (within 60s). Stale Codex session jsonl files do not cause false positives.
 
 This is a **visual cue that Codex is billing through the API** (mirroring the Claude-side convention where `$X.XX` cost is shown for API-key users). The label "API" is intentionally generic; no subscription plan proper nouns appear in any output.
-
-> ⚠️ **Known limitation (under review)**: detection currently reads the single most-recent jsonl file by mtime. If you used an API-key session and then switched back to subscription auth, the `[API]` marker keeps showing until a new session is started (the latest jsonl remains the stale API-mode one). A stricter detector (mtime-based liveness check / auth-mode-change trigger / etc.) is being designed for a follow-up release.
 
 #### Bars with no data are omitted individually
 
