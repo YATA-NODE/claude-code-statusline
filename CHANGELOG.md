@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.4] - 2026-05-17
+
+### Added
+- Claude side: **rate_limits cache fallback** so the 5h / Week bars do not blink to `N/A` at startup or right after `/compact` (frames where the Claude Code stdin JSON briefly omits `rate_limits`). Each tick that does receive `rate_limits` writes the values to `~/.cache/claude-code-statusline/claude-rate-limits.json`; subsequent ticks that lack `rate_limits` restore the cached values so the bars stay visible.
+- Cache entries whose `resets_at` has already passed are discarded on load (the server has zeroed those windows, so the cached value would show a misleading 0% / past timestamp).
+- Mirrors the spirit of v0.4.3 on the Codex side ("show the last known budget so the user can decide before the next session"), achieved here via self-cached writes since Claude's rate limits are server-side and have no local persistent source.
+
+### Notes
+- Write is gated by content comparison (`read → bytes-equal → skip`): identical `rate_limits` values across 60s ticks do not rewrite the file, avoiding SSD wear / WSL2 disk latency.
+- Cache file size is a single fixed-name JSON (~120 bytes), never appended; no unbounded growth.
+- Fail-safe: any read/write error returns silently and falls through to the existing `N/A` behavior. Non-dict cached content is rejected.
+- Cache content = `used_percentage` (int) + `resets_at` (epoch) only; no tokens, PII, or credentials are written to disk.
+
 ## [0.4.3] - 2026-05-17
 
 ### Changed

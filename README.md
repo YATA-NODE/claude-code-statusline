@@ -14,6 +14,7 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 - **モデル名の右に `repo名/branch名` を表示**（Git リポジトリ内のとき）
 - **API 利用時のみ累計コスト `$X.XX` を末尾に表示**（サブスクリプション利用時は非表示）
 - レートリミット情報が無いとき（非サブスク・初回起動直後など）は `N/A` でフォールバック
+- **起動直後・`/compact` 直後でレートリミットが一時欠落するフレームでも、前回観測値を `~/.cache/` から即復元してバーを N/A に瞬間遷移させない**（v0.4.4 で追加）
 - 標準ライブラリのみ（外部依存なし）
 - **補助機能（opt-in）**: Codex CLI のレート残量を並置表示など。default OFF、明示フラグ指定時のみ動作（詳細は [補助機能](#補助機能) 章）
 
@@ -38,6 +39,16 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 2. 過去に同 `session_id` で一度でも `rate_limits` を観測していればサブスク扱い（`~/.cache/claude-code-statusline/<session_id>.subscription` に空ファイルで記録）
 
 この二段判定により、`/compact` 直後など `rate_limits` が一時的に欠落するフレームでもサブスク利用者にコストが漏れません。マーカーは 0 バイトの空ファイルで、不要になったら `~/.cache/claude-code-statusline/` ごと削除して問題ありません。
+
+### レートリミット値のキャッシュ復元（起動時表示）
+
+5h / Week バーは Claude Code から渡される `rate_limits` をそのまま表示しますが、**起動直後や `/compact` 直後など、stdin の JSON に `rate_limits` フィールドが一時的に来ないフレーム**があります。そのまま描画するとバーが `N/A` に瞬間遷移して読みづらいため、本スクリプトは次のキャッシュ機構で穴埋めします:
+
+1. stdin に `rate_limits` が来ているフレームでは、その値を `~/.cache/claude-code-statusline/claude-rate-limits.json` に書き込みます（同一内容なら書込スキップ = 60 秒ごとのディスク摩耗回避）。
+2. stdin に `rate_limits` が来ていないフレームでは、上記キャッシュから前回観測値を読み込んでバー描画に使います。
+3. キャッシュ内の `resets_at` が既に過去になっていた場合は破棄し、`N/A` にフォールバックします（サーバー側はリセット後 0% に戻っているため、古い % を表示すると誤情報になるため）。
+
+これにより、Claude Code を起動した瞬間からバーが見える状態になり、レート残量の意思決定が即できます。書き込み内容は `used_percentage` の整数と `resets_at` の Unix epoch のみで、トークンや認証情報は一切書き込みません。キャッシュは `~/.cache/claude-code-statusline/` ごと削除しても問題なく、次回 stdin に値が来た時点で再構築されます。
 
 ## 必要環境
 
@@ -247,6 +258,7 @@ A simple Status Line for [Claude Code](https://claude.com/claude-code) that disp
 - **Shows `repo/branch` to the right of the model name** when inside a Git repository
 - **Shows accumulated `$X.XX` cost only when using the API** (hidden for Claude.ai subscription users)
 - Falls back to `N/A` when rate-limit info is unavailable (e.g. non-subscribers, fresh sessions)
+- **Survives the brief windows at startup / right after `/compact` where stdin temporarily lacks `rate_limits`** by restoring the last observed values from `~/.cache/`, so the bars don't blink to N/A (added in v0.4.4)
 - Pure standard library — no external dependencies
 - **Auxiliary features (opt-in)**: side-by-side Codex CLI rate display, etc. Default OFF; only active when explicit flags are given (see [Auxiliary features](#auxiliary-features))
 
@@ -271,6 +283,16 @@ The cost is shown only when **API-key usage is certain** (i.e. when the subscrip
 2. If `rate_limits` was ever seen previously in the same `session_id`, treat as subscription (recorded as an empty file at `~/.cache/claude-code-statusline/<session_id>.subscription`).
 
 This two-step check prevents cost from leaking to subscription users on frames where `rate_limits` is briefly missing (e.g. right after `/compact`). The marker is a 0-byte empty file; you can delete `~/.cache/claude-code-statusline/` anytime when it is no longer needed.
+
+### Rate-limit value cache (visible from startup)
+
+The 5h / Week bars display Claude Code's `rate_limits` payload directly, but **at startup and right after `/compact`, stdin briefly omits the `rate_limits` field for a few frames**. Rendering those frames as-is would flash `N/A` and make the display noisy, so the script bridges the gap with a cache:
+
+1. On frames where `rate_limits` is present in stdin, the values are written to `~/.cache/claude-code-statusline/claude-rate-limits.json` (skipped if the bytes match the existing cache — avoids 60-second-tick disk churn).
+2. On frames where `rate_limits` is missing, the last observed values are restored from that cache file and used to render the bars.
+3. Cache entries whose `resets_at` has already passed are discarded on load and fall through to `N/A` (the server resets those windows to 0% on the boundary, so displaying the cached % would be misleading).
+
+This lets the bars be readable the moment Claude Code launches, so you can size up the remaining budget right away. The on-disk content is only `used_percentage` integers and `resets_at` epochs — no tokens, no credentials. Deleting `~/.cache/claude-code-statusline/` is always safe; the cache rebuilds itself on the next frame that includes `rate_limits`.
 
 ## Requirements
 

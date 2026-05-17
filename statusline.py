@@ -13,9 +13,10 @@ import time
 import unicodedata
 from itertools import zip_longest
 
-__version__ = "0.4.3"
+__version__ = "0.4.4"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
+CLAUDE_RATE_CACHE = os.path.join(CACHE_DIR, "claude-rate-limits.json")
 
 BAR_WIDTH = 24
 LABEL_WIDTH = 9
@@ -103,6 +104,45 @@ def is_known_subscription(session_id: str) -> bool:
         return os.path.exists(subscription_marker_path(session_id))
     except OSError:
         return False
+
+
+def save_claude_rate_limits(rate_limits) -> None:
+    if not isinstance(rate_limits, dict):
+        return
+    try:
+        payload = json.dumps(rate_limits).encode("utf-8")
+    except (TypeError, ValueError):
+        return
+    try:
+        with open(CLAUDE_RATE_CACHE, "rb") as f:
+            if f.read() == payload:
+                return
+    except OSError:
+        pass
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(CLAUDE_RATE_CACHE, "wb") as f:
+            f.write(payload)
+    except OSError:
+        pass
+
+
+def load_claude_rate_limits():
+    try:
+        with open(CLAUDE_RATE_CACHE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(d, dict):
+        return None
+    # Drop past-reset cache: server has zeroed those windows, displaying them
+    # would show stale 0% as if the user just reset.
+    now = time.time()
+    five_reset = get_int(d, "five_hour", "resets_at")
+    week_reset = get_int(d, "seven_day", "resets_at")
+    if (five_reset is None or five_reset <= now) and (week_reset is None or week_reset <= now):
+        return None
+    return d
 
 
 def get_repo_branch(project_dir: str) -> str:
@@ -365,8 +405,17 @@ def main() -> None:
     cost = data.get("cost") or {}
     total_cost = cost.get("total_cost_usd")
     rate_limits_obj = data.get("rate_limits")
-    if rate_limits_obj is not None:
+    if isinstance(rate_limits_obj, dict):
         remember_subscription(session_id)
+        save_claude_rate_limits(rate_limits_obj)
+    else:
+        # stdin lacks rate_limits at startup / immediately after /compact —
+        # bridge with the last observed values.
+        cached = load_claude_rate_limits()
+        if cached is not None:
+            data["rate_limits"] = cached
+            rate_limits_obj = cached
+            remember_subscription(session_id)
     cost_str = ""
     subscription_known = rate_limits_obj is not None or is_known_subscription(session_id)
     if not subscription_known and isinstance(total_cost, (int, float)) and total_cost > 0:
