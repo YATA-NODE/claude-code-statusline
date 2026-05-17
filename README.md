@@ -16,7 +16,7 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 - レートリミット情報が無いとき（非サブスク・初回起動直後など）は `N/A` でフォールバック
 - **起動直後・`/compact` 直後でレートリミットが一時欠落するフレームでも、前回観測値を `~/.cache/` から即復元してバーを N/A に瞬間遷移させない**（v0.4.4 で追加）
 - 標準ライブラリのみ（外部依存なし）
-- **補助機能（opt-in）**: Codex CLI のレート残量を並置表示など。default OFF、明示フラグ指定時のみ動作（詳細は [補助機能](#補助機能) 章）
+- **補助機能（opt-in）**: Codex CLI のレート残量を並置表示、`--simple` で横幅圧縮の 1-2 行モード、など。default OFF、明示フラグ指定時のみ動作（詳細は [補助機能](#補助機能) 章）
 
 ## 表示内容
 
@@ -49,6 +49,19 @@ Claude Code 用のシンプルな Status Line。**モデル名・コンテキス
 3. キャッシュ内の `resets_at` が既に過去になっていた場合は破棄し、`N/A` にフォールバックします（サーバー側はリセット後 0% に戻っているため、古い % を表示すると誤情報になるため）。
 
 これにより、Claude Code を起動した瞬間からバーが見える状態になり、レート残量の意思決定が即できます。書き込み内容は `used_percentage` の整数と `resets_at` の Unix epoch のみで、トークンや認証情報は一切書き込みません。キャッシュは `~/.cache/claude-code-statusline/` ごと削除しても問題なく、次回 stdin に値が来た時点で再構築されます。
+
+### ⚠ 表示値の取り扱いに関する免責(必ずお読みください)
+
+本ツールは status line による **表示の補助** が目的です。表示されている値は、判断の **目安** としてご利用ください。重要な判断(残量・課金・認証モードの確認)は必ず公式ダッシュボード / 公式 CLI コマンドで再確認してください。
+
+| 表示項目 | 注意点 |
+|---|---|
+| `$X.XX` コスト | Claude Code が渡す `cost.total_cost_usd`(セッション内累計の概算)の表示。Anthropic 公式の課金額そのものではない。**正確な API 課金は Anthropic Console で確認**してください |
+| `[API]` マーカー(Codex 側) | `~/.codex/auth.json` の `OPENAI_API_KEY` フィールドの存在のみで判定する **ヒューリスティック**。実際の API 課金状況は OpenAI ダッシュボードで確認してください |
+| 5h / Week レートリミット残量 | Claude Code / Codex CLI から渡される値の **その瞬間のスナップショット**。サーバー側集計タイミングや実際のクォータ消費とは数秒〜数十秒のズレが発生し得る |
+| サブスクリプション判定(コスト非表示) | `rate_limits` 観測 + セッション ID マーカーによる二段判定で、厳密な認証種別の判定ではない |
+
+表示が一時的に崩れる / 取得失敗時は安全側(N/A 表示 or 非表示)に倒す設計ですが、本ツールの値だけで最終判断しないでください。
 
 ## 必要環境
 
@@ -141,6 +154,59 @@ EMPTY_COLOR = "\033[90m"   # bright black (16色)
 opt-in で有効化する追加機能群。**標準機能(上記 4 本柱)とは独立**しており、コマンドライン引数で明示的に有効化したときのみ動作・I/O 発生。default は OFF なので、何も指定しなければ標準機能だけが動きます。
 
 ![preview-codex](preview_codex.png)
+
+### シンプル版表示 (`--simple`)
+
+`--simple` フラグを付けると、バーを廃止して **1 行(端末幅に収まれば)/ 2 行(claude と codex の境目で改行)** のコンパクトレイアウトに切り替わります。`--codex` と組み合わせ可能。
+
+![preview-simple](preview_simple.png)
+
+(上から: 通常運用 / Context 警告 / Codex 並置 1 行 / Codex 並置 2 行)
+
+#### 有効化
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "python3 /home/<your-user>/.claude/statusline.py --simple --codex --width 200",
+    "padding": 0,
+    "refreshInterval": 60000
+  }
+}
+```
+
+`--simple` 単体(Codex 並置なし)なら `--width` は不要(1 行に収まる前提)。`--simple --codex` で 2 行版に明示的に倒したい場合は `--width 80` 等を指定してください。
+
+#### 表示内容
+
+- 左から順に: `repo / branch` → モデル名 → `📒: Context%` → `5h: % ↻ HH:MM` → `Week: % ↻ M/D HH:MM` → `$X.XX`(API 利用時のみ)
+- `--codex` 併用時は `/` を区切りに **Codex 部** が続く: `... / [codex モデル名] [API] 📒: % 5h: % ↻ HH:MM Week: % ↻ M/D HH:MM`
+- パーセント数値に **段階色**(緑 ~59% / 黄 60-79% / 赤 80%~)を適用
+- Context **80%+ で `📒: NN%!` の末尾 `!` マーカー**(色非依存、モノクロ端末でも警告を視認可能)
+- 標準 4 行版にある `⚠ /compact 推奨` 文言は省略(横幅圧縮優先、`!` マーカーと赤数値で代替)
+
+#### 自動改行ルール
+
+1. まず 1 行で組み立てて `visible_len` で実セル幅を測定
+2. 端末幅(`tmux pane_width` → `--width` → `STATUSLINE_COLUMNS` → `COLUMNS` → TTY fd → fallback 80 の優先順)に収まれば 1 行
+3. 収まらなければ claude 部 / codex 部の境目で改行して 2 行(2 行目の冒頭に `/` プリフィックスは付けない)
+4. 2 行に分けても収まらない極端な狭幅(目安: 60 cells 未満)ではターミナル側の wrap に任せる = **最低推奨幅は 120 cells**
+
+#### 絵文字フォントについて
+
+`📒`(notebook 絵文字)はカラー絵文字フォント(**Noto Color Emoji** / **Apple Color Emoji** / **Segoe UI Emoji** など)が必要です。フォントが無い環境ではターミナル次第で **豆腐(□)** のような fallback グリフが表示されます(Linux + minimal フォントセットの WSL2 ターミナル等で発生しやすい)。気になる場合は使用ターミナルにカラー絵文字フォントを追加してください。
+
+(将来オプションとして `--simple-no-emoji` で `Ctx:` の ASCII fallback への切替を検討中。)
+
+#### 既存機構の継承
+
+`--simple` モードは以下の既存データ機構を **無改変で継承**:
+
+- v0.4.4 Claude rate_limits キャッシュ復元(起動直後 / `/compact` 直後でも 5h / Week が即表示)
+- v0.4.3 Codex multi-jsonl walk(`token_count` イベントが最新 jsonl になくても過去ファイルから取得)
+- v0.4.1 `[API]` マーカー(`~/.codex/auth.json` ベース、認証切替即時反映)
+- v0.3.1 サブスクリプション判定二段(`/compact` 直後でもコスト誤表示なし)
 
 ### Codex CLI 並置表示 (`--codex`)
 
@@ -260,7 +326,7 @@ A simple Status Line for [Claude Code](https://claude.com/claude-code) that disp
 - Falls back to `N/A` when rate-limit info is unavailable (e.g. non-subscribers, fresh sessions)
 - **Survives the brief windows at startup / right after `/compact` where stdin temporarily lacks `rate_limits`** by restoring the last observed values from `~/.cache/`, so the bars don't blink to N/A (added in v0.4.4)
 - Pure standard library — no external dependencies
-- **Auxiliary features (opt-in)**: side-by-side Codex CLI rate display, etc. Default OFF; only active when explicit flags are given (see [Auxiliary features](#auxiliary-features))
+- **Auxiliary features (opt-in)**: side-by-side Codex CLI rate display, single-line compact layout via `--simple`, etc. Default OFF; only active when explicit flags are given (see [Auxiliary features](#auxiliary-features))
 
 ## Display contents
 
@@ -293,6 +359,19 @@ The 5h / Week bars display Claude Code's `rate_limits` payload directly, but **a
 3. Cache entries whose `resets_at` has already passed are discarded on load and fall through to `N/A` (the server resets those windows to 0% on the boundary, so displaying the cached % would be misleading).
 
 This lets the bars be readable the moment Claude Code launches, so you can size up the remaining budget right away. The on-disk content is only `used_percentage` integers and `resets_at` epochs — no tokens, no credentials. Deleting `~/.cache/claude-code-statusline/` is always safe; the cache rebuilds itself on the next frame that includes `rate_limits`.
+
+### ⚠ Disclaimer about the displayed values (please read)
+
+This tool is a **display aid** for the status line. Treat what you see here as a **rough indicator**, not as authoritative numbers. Always cross-check critical decisions (remaining budget, billing, auth mode) against the official dashboards / CLI commands.
+
+| Field | Caveat |
+|---|---|
+| `$X.XX` cost | Surfaces `cost.total_cost_usd` as reported by Claude Code (per-session running total). This is **not** the authoritative billing figure — confirm actual API charges in the Anthropic Console. |
+| `[API]` marker (Codex side) | A **heuristic** based on whether `~/.codex/auth.json` has an `OPENAI_API_KEY` field. Confirm real API billing in the OpenAI dashboard. |
+| 5h / Week rate-limit remaining | A **point-in-time snapshot** of values passed by Claude Code / Codex CLI. There can be a several-seconds to several-tens-of-seconds lag vs. the server-side accounting. |
+| Subscription detection (cost hidden) | A two-step heuristic (`rate_limits` observation + session-id marker). Not a strict auth-type check. |
+
+When data is briefly missing or fetch fails, the script falls back to N/A or hides the row (safe-side default) — but the numbers you do see are best-effort, not authoritative. Don't make final decisions on this alone.
 
 ## Requirements
 
@@ -385,6 +464,59 @@ EMPTY_COLOR = "\033[90m"   # bright black (16 colors)
 Opt-in extensions that activate only when explicitly enabled via command-line flags. They are **fully independent from the core 4-line layout** above — no I/O, no behavior change unless you opt in.
 
 ![preview-codex](preview_codex.png)
+
+### Simple compact layout (`--simple`)
+
+Adding `--simple` drops the bars and switches to a **single-line layout** (or two lines, broken at the claude/codex boundary, when the terminal is too narrow). Can be combined with `--codex`.
+
+![preview-simple](preview_simple.png)
+
+(top to bottom: normal / Context warning / Codex side-by-side single line / Codex side-by-side two lines)
+
+#### Enable
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "python3 /home/<your-user>/.claude/statusline.py --simple --codex --width 200",
+    "padding": 0,
+    "refreshInterval": 60000
+  }
+}
+```
+
+`--simple` alone (no Codex side-by-side) doesn't need `--width` (everything fits on a single line). For `--simple --codex` use `--width 80` if you want to force the two-line layout.
+
+#### Layout
+
+- Left to right: `repo / branch` → model name → `📒: Context%` → `5h: % ↻ HH:MM` → `Week: % ↻ M/D HH:MM` → `$X.XX` (API only)
+- With `--codex`, the **Codex segment** follows after a ` / ` separator: `... / [codex model] [API] 📒: % 5h: % ↻ HH:MM Week: % ↻ M/D HH:MM`
+- Percentages get the same **stage colors** as the bars (green ≤ 59% / yellow 60–79% / red ≥ 80%)
+- When Context is ≥ 80%, a color-independent `!` marker is appended: `📒: 92%!`. This keeps the warning readable on monochrome terminals, in saved logs, and for color-blind users
+- The full `⚠ /compact 推奨` text from bar mode is omitted (width-compression priority); the red percentage + `!` marker substitute
+
+#### Auto wrap
+
+1. Build the full line and measure with `visible_len`
+2. If it fits in the terminal width (resolution order: tmux pane_width → `--width` → `STATUSLINE_COLUMNS` → `COLUMNS` → TTY fd → fallback 80), render one line
+3. Otherwise break at the claude/codex boundary and render two lines (no `/` prefix on the second line)
+4. If even two lines don't fit (rough minimum: 60 cells), terminal-side wrap kicks in. **Recommended minimum width: 120 cells.**
+
+#### About the emoji glyph
+
+`📒` (the notebook emoji) requires a color emoji font (**Noto Color Emoji**, **Apple Color Emoji**, **Segoe UI Emoji**, etc.). On terminals without one, it falls back to a tofu (□) glyph (commonly seen on minimal WSL2 / Linux setups). Install or configure a color emoji font in your terminal if that bothers you.
+
+(A future `--simple-no-emoji` flag for an ASCII `Ctx:` fallback is being considered.)
+
+#### Inherited mechanisms
+
+`--simple` mode inherits the following existing data plumbing **without modification**:
+
+- v0.4.4 Claude rate_limits cache restore (5h / Week visible from launch + immediately after `/compact`)
+- v0.4.3 Codex multi-jsonl walk (rate-limit values surfaced from earlier jsonls when the latest has no `token_count` event)
+- v0.4.1 `[API]` marker (driven by `~/.codex/auth.json`, reflects auth switches on the next refresh)
+- v0.3.1 two-step subscription detection (no cost leak after `/compact`)
 
 ### Codex CLI side-by-side display (`--codex`)
 

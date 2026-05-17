@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.5] - 2026-05-17
+
+### Added
+- `--simple` flag: **single-line compact layout** that drops the bars and shows just the model name, `📒: NN%` for Context, `5h: NN% ↻ HH:MM`, `Week: NN% ↻ M/D HH:MM`, and `$X.XX` (API mode only). Stage colors (green / yellow / red) are applied to the percentage digits so visual urgency is preserved without the bars.
+- Auto layout: tries to fit everything on **one line first** (` / ` separator between claude and codex segments), falls back to **two lines** (newline at the claude/codex boundary) when terminal width would overflow.
+- Color-independent `!` warning marker is appended to the Context % when ≥ 80% (e.g. `📒: 92%!`), so the `/compact` prompt remains visible on monochrome terminals / logs / color-blind users.
+- Combines freely with `--codex`; bar mode is untouched when `--simple` is omitted.
+
+### Notes
+- Inherits v0.4.4 Claude rate_limits cache, v0.4.3 Codex multi-jsonl walk, and v0.4.1 `[API]` marker without modification — the same data sources feed both bar and simple modes.
+- `📒` is an emoji that requires a color emoji font (Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji, etc.). On terminals without one it falls back to a tofu (□) glyph; install or configure an emoji font in your terminal if affected. Future `--simple-no-emoji` opt-out is being considered.
+- README has been reorganized with a "Disclaimer" block at the end of the Display section: `$X.XX` cost is the per-session running total reported by Claude Code (not the authoritative billing figure), `[API]` is a heuristic based on `OPENAI_API_KEY` existence in `~/.codex/auth.json`, and rate-limit values are point-in-time snapshots that can lag actual server-side accounting. Always confirm critical numbers in the official dashboards.
+
 ## [0.4.4] - 2026-05-17
 
 ### Added

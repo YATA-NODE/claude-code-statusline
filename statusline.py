@@ -13,7 +13,7 @@ import time
 import unicodedata
 from itertools import zip_longest
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 CLAUDE_RATE_CACHE = os.path.join(CACHE_DIR, "claude-rate-limits.json")
@@ -304,6 +304,67 @@ def _codex_extract(paths):
     return info
 
 
+SIMPLE_CTX_LABEL = "📒"
+
+
+def _simple_pct_segment(label, pct, reset_epoch, with_date, hide_na, is_ctx):
+    # hide_na=True drops the segment entirely (Codex API mode has no
+    # rate-limit concept). is_ctx=True attaches a color-independent "!"
+    # marker at 80%+ so the warning is readable on monochrome terminals.
+    if pct < 0:
+        if hide_na:
+            return ""
+        return f"{label}: {DIM}N/A{RESET}"
+    c = color_for(pct)
+    seg = f"{label}: {c}{pct}%{RESET}"
+    if is_ctx and pct >= 80:
+        seg += f"{c}!{RESET}"
+    if reset_epoch is not None:
+        seg += f" {DIM}↻ {format_reset(reset_epoch, with_date)}{RESET}"
+    return seg
+
+
+def _simple_metric_rows(ctx_pct, five_pct, week_pct, five_reset, week_reset):
+    return (
+        (SIMPLE_CTX_LABEL, ctx_pct, None, False, True),
+        ("5h", five_pct, five_reset, False, False),
+        ("Week", week_pct, week_reset, True, False),
+    )
+
+
+def _render_simple_claude(info):
+    parts = []
+    if info.get("repo_branch"):
+        parts.append(info["repo_branch"])
+    parts.append(f"{BOLD}{info['model']}{RESET}")
+    for label, pct, reset_epoch, with_date, is_ctx in _simple_metric_rows(
+        info["ctx_pct"], info["five_pct"], info["week_pct"],
+        info["five_reset"], info["week_reset"],
+    ):
+        seg = _simple_pct_segment(label, pct, reset_epoch, with_date, hide_na=False, is_ctx=is_ctx)
+        if seg:
+            parts.append(seg)
+    if info.get("cost_str"):
+        parts.append(f"{DIM}{info['cost_str']}{RESET}")
+    return " ".join(parts)
+
+
+def _render_simple_codex(info):
+    safe_model = sanitize_display(info["model"]) or "codex"
+    parts = [f"{BOLD}{safe_model}{RESET}"]
+    is_api = bool(info.get("is_api_mode"))
+    if is_api:
+        parts.append(f"{DIM}[API]{RESET}")
+    for label, pct, reset_epoch, with_date, is_ctx in _simple_metric_rows(
+        info["ctx_pct"], info["five_pct"], info["week_pct"],
+        info["five_reset"], info["week_reset"],
+    ):
+        seg = _simple_pct_segment(label, pct, reset_epoch, with_date, hide_na=is_api, is_ctx=is_ctx)
+        if seg:
+            parts.append(seg)
+    return " ".join(parts)
+
+
 def _codex_render(info):
     safe_model = sanitize_display(info["model"]) or "codex"
     header = f"{BOLD}{safe_model}{RESET}"
@@ -385,6 +446,7 @@ def _combine_columns(left_lines, right_lines, width_override=None):
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--codex", action="store_true")
+    parser.add_argument("--simple", action="store_true")
     parser.add_argument("--width", type=int, default=None)
     args, _unknown = parser.parse_known_args()
 
@@ -426,6 +488,31 @@ def main() -> None:
     week = get_pct(data, "rate_limits", "seven_day", "used_percentage")
     five_reset = get_int(data, "rate_limits", "five_hour", "resets_at")
     week_reset = get_int(data, "rate_limits", "seven_day", "resets_at")
+
+    if args.simple:
+        claude_seg = _render_simple_claude({
+            "repo_branch": repo_branch,
+            "model": model_name,
+            "ctx_pct": ctx, "five_pct": five, "week_pct": week,
+            "five_reset": five_reset, "week_reset": week_reset,
+            "cost_str": cost_str,
+        })
+        codex_seg = ""
+        if args.codex:
+            codex_paths = _codex_jsonl_candidates()
+            codex_info = _codex_extract(codex_paths) if codex_paths else None
+            if codex_info:
+                codex_seg = _render_simple_codex(codex_info)
+        if codex_seg:
+            one_line = f"{claude_seg} / {codex_seg}"
+            term_w = _term_width(args.width)
+            if visible_len(one_line) <= term_w:
+                sys.stdout.write(one_line)
+            else:
+                sys.stdout.write(f"{claude_seg}\n{codex_seg}")
+        else:
+            sys.stdout.write(claude_seg)
+        return
 
     header = f"{BOLD}{model_name}{RESET}"
     if repo_branch:
