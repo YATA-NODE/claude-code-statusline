@@ -13,7 +13,7 @@ import time
 import unicodedata
 from itertools import zip_longest
 
-__version__ = "0.4.5"
+__version__ = "0.4.6"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 CLAUDE_RATE_CACHE = os.path.join(CACHE_DIR, "claude-rate-limits.json")
@@ -297,10 +297,13 @@ def _codex_extract(paths):
         info["five_reset"] = get_int(tc, "rate_limits", "primary", "resets_at")
         info["week_pct"] = get_pct(tc, "rate_limits", "secondary", "used_percent")
         info["week_reset"] = get_int(tc, "rate_limits", "secondary", "resets_at")
-        total = get_int(tc, "info", "total_token_usage", "total_tokens")
+        # last_token_usage reflects the most recent turn's actual context
+        # footprint (drops after /compact). total_token_usage is cumulative
+        # across all turns and would saturate to 100% regardless of compact.
+        last_tokens = get_int(tc, "info", "last_token_usage", "total_tokens")
         ctx_window = get_int(tc, "info", "model_context_window")
-        if total is not None and ctx_window is not None and ctx_window > 0:
-            info["ctx_pct"] = max(0, min(100, int(total * 100 / ctx_window)))
+        if last_tokens is not None and ctx_window is not None and ctx_window > 0:
+            info["ctx_pct"] = max(0, min(100, int(last_tokens * 100 / ctx_window)))
     return info
 
 

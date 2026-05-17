@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.6] - 2026-05-18
+
+### Fixed
+- **Codex Context bar stuck at 100% after `/compact`**: `_codex_extract` was reading `info.total_token_usage.total_tokens`, which is a **session-cumulative** counter that grows across every turn and never drops on compact — so the bar saturated to 100% within a few turns and stayed there. Switched to `info.last_token_usage.total_tokens`, which reflects the most recent turn's actual context footprint and correctly drops right after `/compact`.
+- No other behavior change. `total_token_usage` was only used for the Context bar; rate-limit bars (5h / Week) and `[API]` detection are untouched.
+
 ## [0.4.5] - 2026-05-17
 
 ### Added
