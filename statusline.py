@@ -13,7 +13,7 @@ import time
 import unicodedata
 from itertools import zip_longest
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 
@@ -182,9 +182,14 @@ def _codex_auth_is_api():
     return isinstance(key, str) and len(key) > 0
 
 
-def _codex_latest_jsonl():
+def _codex_jsonl_candidates():
+    # Returns today + yesterday jsonl paths in mtime-desc order. Empty list
+    # if Codex dir absent or no files found. Multi-file scan lets the latest
+    # usable token_count event be picked up even when the most-recent jsonl
+    # has none (e.g. quota-exceeded with no response — rate_limits are not
+    # written, but earlier sessions hold the user's actual budget state).
     if not os.path.isdir(CODEX_DIR):
-        return None
+        return []
     today = _dt.date.today()
     candidates = []
     for delta in (0, 1):
@@ -194,39 +199,46 @@ def _codex_latest_jsonl():
             f"{d.year:04d}", f"{d.month:02d}", f"{d.day:02d}", "*.jsonl",
         )
         candidates.extend(glob.glob(pattern))
-    if not candidates:
-        return None
     try:
-        return max(candidates, key=os.path.getmtime)
+        return sorted(candidates, key=os.path.getmtime, reverse=True)
     except OSError:
-        return None
+        return []
 
 
-def _codex_extract(path):
+def _codex_extract(paths):
+    # Walks jsonl paths (mtime-desc); takes model from the first turn_context
+    # found and tc from the latest token_count event in the first file that
+    # has one. Stops once both are filled.
     model = None
     tc = None
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                if '"turn_context"' in line:
-                    try:
-                        d = json.loads(line)
-                    except (ValueError, TypeError):
-                        continue
-                    if d.get("type") == "turn_context":
-                        m = (d.get("payload") or {}).get("model")
-                        if isinstance(m, str) and m:
-                            model = m
-                elif '"token_count"' in line:
-                    try:
-                        d = json.loads(line)
-                    except (ValueError, TypeError):
-                        continue
-                    payload = d.get("payload") or {}
-                    if d.get("type") == "event_msg" and payload.get("type") == "token_count":
-                        tc = payload
-    except OSError:
-        return None
+    for path in paths:
+        if model is not None and tc is not None:
+            break
+        file_tc = None
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if model is None and '"turn_context"' in line:
+                        try:
+                            d = json.loads(line)
+                        except (ValueError, TypeError):
+                            continue
+                        if d.get("type") == "turn_context":
+                            m = (d.get("payload") or {}).get("model")
+                            if isinstance(m, str) and m:
+                                model = m
+                    elif tc is None and '"token_count"' in line:
+                        try:
+                            d = json.loads(line)
+                        except (ValueError, TypeError):
+                            continue
+                        payload = d.get("payload") or {}
+                        if d.get("type") == "event_msg" and payload.get("type") == "token_count":
+                            file_tc = payload
+        except OSError:
+            continue
+        if tc is None and file_tc is not None:
+            tc = file_tc
 
     if model is None and tc is None:
         return None
@@ -383,8 +395,8 @@ def main() -> None:
         lines.append(line)
 
     if args.codex:
-        codex_path = _codex_latest_jsonl()
-        codex_info = _codex_extract(codex_path) if codex_path else None
+        codex_paths = _codex_jsonl_candidates()
+        codex_info = _codex_extract(codex_paths) if codex_paths else None
         codex_lines = _codex_render(codex_info) if codex_info else []
         lines = _combine_columns(lines, codex_lines, width_override=args.width)
 

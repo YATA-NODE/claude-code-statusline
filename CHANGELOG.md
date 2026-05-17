@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.3] - 2026-05-17
+
+### Changed
+- Codex side: when the most-recent jsonl has no `token_count` event (e.g. quota-exceeded with no response), the extractor now **falls back to earlier jsonl files** (today + yesterday, mtime-desc order) until one with a `token_count` event is found. Rate-limit bars and Context now display the **last known state** instead of `N/A`, so subscription users can check "how much budget is left" before starting a new Codex session.
+- Model name is taken from the first `turn_context` encountered during the same walk (so the most-recent session's model is shown even if its budget came from an earlier jsonl).
+
+### Notes
+- Falls back to the existing behavior (no row rendered) if no jsonl in today + yesterday has a `token_count` event at all.
+- Still subject to the `--codex` opt-in; no Codex I/O without it.
+- Per-tick cost: at most a handful of jsonl reads (today + yesterday window), short-circuited once both `model` and `token_count` are found. In practice the very first or second file already has both fields.
+
 ## [0.4.2] - 2026-05-17
 
 ### Fixed
