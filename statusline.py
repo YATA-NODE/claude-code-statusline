@@ -13,7 +13,7 @@ import time
 import unicodedata
 from itertools import zip_longest
 
-__version__ = "0.4.6"
+__version__ = "0.4.7"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 CLAUDE_RATE_CACHE = os.path.join(CACHE_DIR, "claude-rate-limits.json")
@@ -336,10 +336,9 @@ def _simple_metric_rows(ctx_pct, five_pct, week_pct, five_reset, week_reset):
 
 
 def _render_simple_claude(info):
-    parts = []
-    if info.get("repo_branch"):
-        parts.append(info["repo_branch"])
-    parts.append(f"{BOLD}{info['model']}{RESET}")
+    # Branch is emitted as its own line by the caller, so it is intentionally
+    # not part of this segment list (which starts at the model name).
+    parts = [f"{BOLD}{info['model']}{RESET}"]
     for label, pct, reset_epoch, with_date, is_ctx in _simple_metric_rows(
         info["ctx_pct"], info["five_pct"], info["week_pct"],
         info["five_reset"], info["week_reset"],
@@ -349,7 +348,7 @@ def _render_simple_claude(info):
             parts.append(seg)
     if info.get("cost_str"):
         parts.append(f"{DIM}{info['cost_str']}{RESET}")
-    return " ".join(parts)
+    return parts
 
 
 def _render_simple_codex(info):
@@ -365,7 +364,30 @@ def _render_simple_codex(info):
         seg = _simple_pct_segment(label, pct, reset_epoch, with_date, hide_na=is_api, is_ctx=is_ctx)
         if seg:
             parts.append(seg)
-    return " ".join(parts)
+    return parts
+
+
+def _wrap_parts(parts, width, sep=" "):
+    """Pack already-rendered segments into lines no wider than `width`
+    visible columns, breaking only at segment boundaries. Lets the simple
+    layout wrap across lines instead of being truncated by the terminal."""
+    lines = []
+    cur = ""
+    cur_w = 0
+    sw = visible_len(sep)
+    for p in parts:
+        pw = visible_len(p)
+        if not cur:
+            cur, cur_w = p, pw
+        elif cur_w + sw + pw <= width:
+            cur += sep + p
+            cur_w += sw + pw
+        else:
+            lines.append(cur)
+            cur, cur_w = p, pw
+    if cur:
+        lines.append(cur)
+    return lines or [""]
 
 
 def _codex_render(info):
@@ -493,28 +515,29 @@ def main() -> None:
     week_reset = get_int(data, "rate_limits", "seven_day", "resets_at")
 
     if args.simple:
-        claude_seg = _render_simple_claude({
-            "repo_branch": repo_branch,
+        claude_parts = _render_simple_claude({
             "model": model_name,
             "ctx_pct": ctx, "five_pct": five, "week_pct": week,
             "five_reset": five_reset, "week_reset": week_reset,
             "cost_str": cost_str,
         })
-        codex_seg = ""
+        codex_parts = []
         if args.codex:
             codex_paths = _codex_jsonl_candidates()
             codex_info = _codex_extract(codex_paths) if codex_paths else None
             if codex_info:
-                codex_seg = _render_simple_codex(codex_info)
-        if codex_seg:
-            one_line = f"{claude_seg} / {codex_seg}"
-            term_w = _term_width(args.width)
-            if visible_len(one_line) <= term_w:
-                sys.stdout.write(one_line)
-            else:
-                sys.stdout.write(f"{claude_seg}\n{codex_seg}")
-        else:
-            sys.stdout.write(claude_seg)
+                codex_parts = _render_simple_codex(codex_info)
+        term_w = _term_width(args.width)
+        # Branch on its own line; the claude body (model + metrics) and the
+        # codex body each start on a fresh line so their metrics line up, and
+        # each body wraps further if it exceeds the width.
+        lines = []
+        if repo_branch:
+            lines.append(repo_branch)
+        lines += _wrap_parts(claude_parts, term_w)
+        if codex_parts:
+            lines += _wrap_parts(codex_parts, term_w)
+        sys.stdout.write("\n".join(lines))
         return
 
     header = f"{BOLD}{model_name}{RESET}"

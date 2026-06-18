@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.7] - 2026-06-19
+
+### Changed
+- **`--simple` now wraps instead of truncating.** The repo/branch is emitted on its own line, and the Claude body (model + metrics) and Codex body each start on a fresh line so their metrics line up. When a body is wider than the wrap target it now **breaks onto additional lines at segment boundaries** instead of being cut off with `…` by the terminal. This replaces the v0.4.5 "fit on one line first, fall back to two lines at the claude/codex boundary" behavior.
+
+### Notes
+- The wrap target is `--width` (or the detected terminal width when `--width` is omitted). For the body to wrap exactly at the screen edge, set `--width` to your terminal's column count; a value **wider** than the terminal lets a line overflow and get truncated by the terminal (`…`), a value **narrower** wraps earlier. Inside `tmux`, the pane width still takes precedence.
+- No change to data sources, color stages, the `!` Context warning marker, or bar mode — only the `--simple` line-composition logic.
+
 ## [0.4.6] - 2026-05-18
 
 ### Fixed
