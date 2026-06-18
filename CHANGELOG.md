@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.8] - 2026-06-19
+
+### Added
+- **Automatic per-pane width detection inside tmux**, so the layout (bar and `--simple`) sizes itself to each terminal without a hard-coded `--width`. Claude Code does not propagate `TMUX` / `TMUX_PANE` to the status-line subprocess, so `_tmux_pane_width()` now identifies its own pane by matching an ancestor PID against each pane's `#{pane_pid}` (via `tmux list-panes -a`). With several agents open in different-width panes, each status line reports its own pane's width instead of the active pane's. Falls back to `TMUX_PANE` direct query (portable, e.g. macOS), then to `COLUMNS` / terminal size / 80 when not in tmux.
+
+### Notes
+- `--width` is now optional: tmux pane width takes precedence when available (it is the authoritative display width inside tmux), and `--width` / `COLUMNS` only apply outside tmux or when pane detection fails.
+- PID matching reads `/proc` (Linux/WSL). On platforms without `/proc` the `TMUX_PANE` direct-query path covers normal tmux usage.
+
 ## [0.4.7] - 2026-06-19
 
 ### Changed

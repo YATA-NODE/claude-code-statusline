@@ -13,7 +13,7 @@ import time
 import unicodedata
 from itertools import zip_longest
 
-__version__ = "0.4.7"
+__version__ = "0.4.8"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 CLAUDE_RATE_CACHE = os.path.join(CACHE_DIR, "claude-rate-limits.json")
@@ -415,20 +415,69 @@ def _codex_render(info):
     return lines
 
 
-def _tmux_pane_width():
-    if not os.environ.get("TMUX"):
-        return None
+def _ancestor_pids(pid, limit=40):
+    """PIDs from `pid` up toward the process-tree root, via Linux /proc.
+
+    Returns just `[pid]` (then stops) on platforms without /proc, so callers
+    must treat a non-match as "unknown" and fall back to other width sources.
+    """
+    chain = []
+    for _ in range(limit):
+        if pid <= 1:
+            break
+        chain.append(pid)
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                data = f.read()
+            # comm (field 2) may itself contain spaces/parens; ppid is the
+            # first integer after the final ')'.
+            ppid = int(data[data.rfind(")") + 2:].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+        pid = ppid
+    return chain
+
+
+def _tmux_query(args):
     try:
         r = subprocess.run(
-            ["tmux", "display-message", "-p", "#{pane_width}"],
-            capture_output=True, text=True, timeout=0.5,
+            ["tmux", *args], capture_output=True, text=True, timeout=0.5,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
-    if r.returncode != 0:
+    return r.stdout if r.returncode == 0 else None
+
+
+def _tmux_pane_width():
+    # Normal tmux: TMUX_PANE identifies our pane directly (also works on
+    # platforms without /proc, e.g. macOS).
+    pane = os.environ.get("TMUX_PANE")
+    if pane:
+        out = _tmux_query(["display-message", "-t", pane, "-p", "#{pane_width}"])
+        if out:
+            w = out.strip()
+            if w.isdigit() and int(w) > 0:
+                return int(w)
+    # Claude Code does not propagate TMUX / TMUX_PANE to the status-line
+    # subprocess, so identify our own pane by matching an ancestor PID against
+    # each pane's pane_pid. A match proves we are inside that pane, so this
+    # needs no env gate (which tmux does not reliably set) and self-limits to
+    # genuine tmux panes — yielding each agent's own pane width even with many
+    # panes open at different widths. `_tmux_query` returns None when tmux is
+    # absent or no server is running, so non-tmux shells fall through safely.
+    out = _tmux_query(["list-panes", "-a", "-F", "#{pane_pid} #{pane_width}"])
+    if not out:
         return None
-    w = r.stdout.strip()
-    return int(w) if w.isdigit() and int(w) > 0 else None
+    width_by_pid = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            width_by_pid[int(parts[0])] = int(parts[1])
+    for anc in _ancestor_pids(os.getpid()):
+        w = width_by_pid.get(anc)
+        if w and w > 0:
+            return w
+    return None
 
 
 def _term_width(override=None):
