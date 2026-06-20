@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.9] - 2026-06-20
+
+### Fixed
+- **Right edge no longer clipped to `…`.** The layout previously packed content up to the *exact* detected width, but a line built to the full width still gets truncated by the terminal / Claude Code's status-line area — because some ambiguous-width glyphs (notably `↻`, U+21BB) measure as 1 cell while the terminal renders them as 2, and the status-line area can reserve a column. A new `_fit_width()` reserves a small **safety margin** below the detected width before fitting content, so overflowing lines wrap (in `--simple`) or fall back to a single column (bar mode) instead of being cut off.
+
+### Added
+- `STATUSLINE_WIDTH_MARGIN` env var to tune the safety margin (default `3`). Increase it if a line still clips; set it to `0` to use the full detected width as before.
+
+### Notes
+- `_term_width()` (the honest physical-width detection) is unchanged; the margin lives in the separate `_fit_width()`, which both layout paths (`_combine_columns` and the `--simple` wrap) now use.
+
 ## [0.4.8] - 2026-06-19
 
 ### Added

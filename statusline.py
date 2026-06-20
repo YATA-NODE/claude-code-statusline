@@ -13,7 +13,7 @@ import time
 import unicodedata
 from itertools import zip_longest
 
-__version__ = "0.4.8"
+__version__ = "0.4.9"
 
 CACHE_DIR = os.path.expanduser("~/.cache/claude-code-statusline")
 CLAUDE_RATE_CACHE = os.path.join(CACHE_DIR, "claude-rate-limits.json")
@@ -30,6 +30,12 @@ EMPTY_COLOR = "\033[38;5;238m"  # 暗いグレー (xterm-256)
 
 SEP = "  "
 TWO_COL_MIN_WIDTH = 120
+# Reserve a margin below the detected width before fitting content. Terminals
+# (and Claude Code's own status-line area) can reserve a column, and some
+# ambiguous-width glyphs (e.g. ↻) render as 2 cells while measuring as 1, so a
+# line built to the exact reported width still gets clipped to "…". Tune with
+# the STATUSLINE_WIDTH_MARGIN env var.
+WIDTH_MARGIN = 3
 CODEX_DIR = os.path.expanduser("~/.codex")
 CODEX_AUTH = os.path.expanduser("~/.codex/auth.json")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -501,10 +507,19 @@ def _term_width(override=None):
     return shutil.get_terminal_size((80, 24)).columns
 
 
+def _fit_width(override=None):
+    """Detected width minus a safety margin — the usable columns for layout."""
+    margin = WIDTH_MARGIN
+    env = os.environ.get("STATUSLINE_WIDTH_MARGIN", "").strip()
+    if env.isdigit():
+        margin = int(env)
+    return max(1, _term_width(override) - margin)
+
+
 def _combine_columns(left_lines, right_lines, width_override=None):
     if not right_lines:
         return left_lines
-    term_w = _term_width(width_override)
+    term_w = _fit_width(width_override)
     if term_w < TWO_COL_MIN_WIDTH:
         return left_lines
     left_w = max((visible_len(l) for l in left_lines), default=0)
@@ -576,7 +591,7 @@ def main() -> None:
             codex_info = _codex_extract(codex_paths) if codex_paths else None
             if codex_info:
                 codex_parts = _render_simple_codex(codex_info)
-        term_w = _term_width(args.width)
+        term_w = _fit_width(args.width)
         # Branch on its own line; the claude body (model + metrics) and the
         # codex body each start on a fresh line so their metrics line up, and
         # each body wraps further if it exceeds the width.

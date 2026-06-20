@@ -189,9 +189,11 @@ opt-in で有効化する追加機能群。**標準機能(上記 4 本柱)とは
 #### 自動改行ルール
 
 1. まず 1 行で組み立てて `visible_len` で実セル幅を測定
-2. 端末幅(`tmux pane_width` → `--width` → `STATUSLINE_COLUMNS` → `COLUMNS` → TTY fd → fallback 80 の優先順)に収まれば 1 行
-3. 収まらなければ claude 部 / codex 部の境目で改行して 2 行(2 行目の冒頭に `/` プリフィックスは付けない)
+2. **可用幅**(検出端末幅から安全マージン `WIDTH_MARGIN`=3 を引いた値。優先順は `tmux pane_width` → `--width` → `STATUSLINE_COLUMNS` → `COLUMNS` → TTY fd → fallback 80)に収まれば 1 行
+3. 収まらなければセグメント境界で改行(claude 部 / codex 部はそれぞれ別行始まり)
 4. 2 行に分けても収まらない極端な狭幅(目安: 60 cells 未満)ではターミナル側の wrap に任せる = **最低推奨幅は 120 cells**
+
+> 安全マージンは、`↻` 等の曖昧幅グリフが端末で 2 セル描画されるのに `visible_len` は 1 と数える分や、ステータスライン領域が 1 列予約する分を吸収して右端の `…` 切れを防ぎます。まだ切れる場合は `STATUSLINE_WIDTH_MARGIN` を増やし(例: 4〜5)、余白を減らしたい場合は小さく(`0` で従来通り検出幅ぴったり)できます。
 
 #### 絵文字フォントについて
 
@@ -499,9 +501,11 @@ Adding `--simple` drops the bars and switches to a **single-line layout** (or tw
 #### Auto wrap
 
 1. Build the full line and measure with `visible_len`
-2. If it fits in the terminal width (resolution order: tmux pane_width → `--width` → `STATUSLINE_COLUMNS` → `COLUMNS` → TTY fd → fallback 80), render one line
-3. Otherwise break at the claude/codex boundary and render two lines (no `/` prefix on the second line)
+2. If it fits in the **usable width** (detected width minus the `WIDTH_MARGIN`=3 safety margin; resolution order: tmux pane_width → `--width` → `STATUSLINE_COLUMNS` → `COLUMNS` → TTY fd → fallback 80), render one line
+3. Otherwise break at segment boundaries (the claude and codex bodies each start on a fresh line)
 4. If even two lines don't fit (rough minimum: 60 cells), terminal-side wrap kicks in. **Recommended minimum width: 120 cells.**
+
+> The safety margin absorbs ambiguous-width glyphs (e.g. `↻`) that render as 2 cells while `visible_len` counts them as 1, as well as a column the status-line area may reserve, preventing the right edge from being clipped to `…`. If a line still clips, raise `STATUSLINE_WIDTH_MARGIN` (e.g. 4–5); to reclaim space, lower it (`0` uses the exact detected width as before).
 
 #### About the emoji glyph
 
